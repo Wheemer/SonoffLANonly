@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.12.2.5
+
+- Expose one **Update interval** control for every top-level Sonoff device, covering all entities attached to that physical device.
+- Apply the interval to the general LAN state and availability watchdog as well as supported realtime telemetry.
+- Reset the watchdog whenever a local callback arrives, avoiding duplicate polling while the device is actively reporting.
+- Keep child entities on their parent device's LAN interval so multiple controls cannot compete for one transport.
+
 ## 3.12.2.4
 
 - Add a persisted **Update interval** Number control to the Configuration section of every device that supports active local telemetry refresh.

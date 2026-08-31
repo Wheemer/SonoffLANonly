@@ -18,7 +18,6 @@ LOCAL_RETRY_SECONDS = 15
 LOCAL_SENSOR_DEFAULT_SECONDS = 30
 LOCAL_POLL_LOOP_SECONDS = 1
 LOCAL_SENSOR_COMMANDS = frozenset({"sledonline", "statistics", "uiActive"})
-LOCAL_SENSOR_POLL_UIIDS = frozenset({15, 32, 126, 181, 182, 190, 262, 277})
 LOCAL_TELEMETRY_WAIT_SECONDS = 15
 LOCAL_TELEMETRY_MDNS_POLL_SECONDS = 2
 LOCAL_SWITCH_WAIT_SECONDS = 5
@@ -145,7 +144,10 @@ class XRegistry(XRegistryBase):
                 # at this moment entities can catch signals with device_id and
                 # update their states, but they can be added to hass later
                 classes = list(get_spec(device))
-                if uiid in LOCAL_SENSOR_POLL_UIIDS:
+                # One setting controls freshness for every entity belonging to
+                # this physical device. Child entities use their parent's LAN
+                # transport and must not create competing interval controls.
+                if not device.get("parent"):
                     from ...number import XUpdateInterval
 
                     classes.append(XUpdateInterval)
@@ -694,7 +696,7 @@ class XRegistry(XRegistryBase):
         ts = time.time()
         device["local"] = True
         device["localfail"] = 0
-        device["localping"] = ts + 59  # one second less than a minute
+        device["localping"] = ts + self._sensor_update_interval(device)
         device["localrecv"] = ts
 
         if self._params_have_telemetry(params):
@@ -797,7 +799,7 @@ class XRegistry(XRegistryBase):
                         {"sledOnline": device["params"]["sledOnline"]},
                     )
                 else:
-                    device["localping"] = ts + 59
+                    device["localping"] = ts + interval
             else:
                 await self.send_local(device)
 
@@ -845,7 +847,9 @@ class XRegistry(XRegistryBase):
             was_local = device["local"]
             device["local"] = True
             device["localfail"] = 0
-            device["localping"] = time.time() + 59
+            device["localping"] = time.time() + self._sensor_update_interval(
+                device
+            )
             device.pop("localconnectfail", None)
             device.pop("localconnectfail_at", None)
             if not was_local:
@@ -899,4 +903,6 @@ class XRegistry(XRegistryBase):
             _LOGGER.debug(f"{did} !! Local4 | Device offline")
             self.dispatcher_send(did)
 
-        device["localping"] = time.time() + LOCAL_RETRY_SECONDS
+        device["localping"] = time.time() + min(
+            LOCAL_RETRY_SECONDS, self._sensor_update_interval(device)
+        )

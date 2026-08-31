@@ -156,6 +156,29 @@ def test_ui_update_interval_overrides_yaml_value():
     assert interval.native_value == 1
 
 
+def test_update_interval_number_exists_for_general_top_level_device():
+    entities = get_entitites(
+        {
+            "extra": {"uiid": 1},
+            "params": {"switch": "on"},
+        }
+    )
+
+    assert any(isinstance(entity, XUpdateInterval) for entity in entities)
+
+
+def test_child_device_does_not_create_competing_update_interval():
+    entities = get_entitites(
+        {
+            "extra": {"uiid": 1},
+            "params": {"switch": "on"},
+            "parent": {"deviceid": "1000000000"},
+        }
+    )
+
+    assert not any(isinstance(entity, XUpdateInterval) for entity in entities)
+
+
 def test_simple_switch():
     entities = get_entitites(
         {
@@ -177,7 +200,7 @@ def test_simple_switch():
             },
         }
     )
-    assert len(entities) == 6
+    assert len(entities) == 7
 
     switch: XSwitch = entities[0]
     assert switch.name == "Kitchen"
@@ -796,7 +819,7 @@ def test_rfbridge():
 
     assert logger_warning[0][0] == "Can't find payload_off: dummy"
 
-    assert len(entities) == 6
+    assert len(entities) == 7
 
     alarm: XRemoteSensor = next(
         e for e in entities if isinstance(e, XRemoteSensor) and e.name == "Custom1"

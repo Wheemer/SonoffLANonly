@@ -361,16 +361,47 @@ def test_device_specific_sensor_update_interval():
     assert registry._sensor_update_interval(XDevice(update_interval=999)) == 300
 
 
-def test_local_update_switch_sets_switch_timestamp():
+def test_local_update_switch_sets_switch_timestamp_and_resets_watchdog(monkeypatch):
     # noinspection PyTypeChecker
     registry: XRegistry = XRegistry(None)
-    device = XDevice(deviceid=DEVICEID, params={"switch": "off"})
+    monkeypatch.setattr(time, "time", lambda: 100.0)
+    device = XDevice(
+        deviceid=DEVICEID,
+        params={"switch": "off"},
+        update_interval=15,
+    )
     registry.devices = {DEVICEID: device}
     registry.local_update(
         {"deviceid": DEVICEID, "params": {"switch": "on", "power": "10.0"}}
     )
-    assert device["localswitch_at"] > 0
+    assert device["localswitch_at"] == 100.0
+    assert device["localping"] == 115.0
     assert device["params"]["switch"] == "on"
+
+
+def test_general_device_refreshes_only_after_callback_interval():
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    device = XDevice(
+        deviceid=DEVICEID,
+        extra={"uiid": 1},
+        local=True,
+        localping=115,
+        update_interval=15,
+        params={"switch": "on"},
+    )
+    calls = []
+
+    async def send_local(*args, **kwargs):
+        calls.append(args)
+
+    registry.send_local = send_local
+
+    asyncio.run(registry.update_local(device, 114))
+    assert calls == []
+
+    asyncio.run(registry.update_local(device, 115))
+    assert calls == [(device,)]
 
 
 def test_update_local_skips_getstate_for_s40_uiids(monkeypatch):
