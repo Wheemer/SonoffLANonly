@@ -3,7 +3,7 @@
 - **Model** - device model from the ewelink cloud.
 - **UIID** - [CoolKit UIID Protocol](https://github.com/CoolKit-Technologies/eWeLink-API/blob/main/en/UIIDProtocol.md). This is displayed as "Hardware firmware" on device page.
 - **Tag** - Just a label, no specifications.
-- **Local Type** - A text value indicates that the device supports the **local protocol**. If you see a dash there, the device does not support it and works **only via the cloud**. If you see a blank space, it simply means there is **no verified information** about the device.
+- **Local Type** - A text value indicates that the device supports the **local protocol**. A dash means the device is known not to support LAN control and is therefore unsupported by SonoffLANonly. A blank means there is no verified information about local support.
 
 | Model                         | UIID  | Tag       | Firmware    | Local Type      | Comment                                       |
 |-------------------------------|-------|-----------|-------------|-----------------|-----------------------------------------------|

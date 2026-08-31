@@ -12,7 +12,7 @@ from homeassistant.util import dt
 
 from .core.const import DOMAIN
 from .core.entity import XEntity
-from .core.ewelink import SIGNAL_ADD_ENTITIES, XRegistry
+from .core.ewelink import LAN_ONLY, SIGNAL_ADD_ENTITIES, XRegistry
 
 PARALLEL_UPDATES = 0  # fix entity_platform parallel_updates Semaphore
 
@@ -54,6 +54,8 @@ class XWiFiDoor(XBinarySensor):
 
     def internal_available(self) -> bool:
         # device with buggy online status
+        if LAN_ONLY:
+            return self.ewelink.can_local(self.device)
         return self.ewelink.cloud.online
 
 

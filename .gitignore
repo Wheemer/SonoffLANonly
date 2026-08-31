@@ -3,6 +3,14 @@ __pycache__/
 
 .homeassistant/
 
+.deploy/
+
+scripts/
+
+/-
+
+.pytest_cache/
+
 .idea/
 
 tests/test_0.py

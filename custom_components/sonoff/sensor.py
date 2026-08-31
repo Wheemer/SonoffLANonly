@@ -1,4 +1,5 @@
 import asyncio
+from datetime import timedelta
 import time
 from typing import Optional
 
@@ -8,8 +9,6 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
-    CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-    CONCENTRATION_PARTS_PER_MILLION,
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfElectricCurrent,
@@ -19,13 +18,30 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfVolume,
 )
+
+try:
+    from homeassistant.const import UnitOfDensity, UnitOfRatio
+
+    CONCENTRATION_UG_M3 = UnitOfDensity.MICROGRAMS_PER_CUBIC_METER
+    CONCENTRATION_PPM = UnitOfRatio.PARTS_PER_MILLION
+except ImportError:  # Home Assistant before the unit enums were introduced
+    from homeassistant.const import (
+        CONCENTRATION_MICROGRAMS_PER_CUBIC_METER as CONCENTRATION_UG_M3,
+        CONCENTRATION_PARTS_PER_MILLION as CONCENTRATION_PPM,
+    )
 from homeassistant.util import dt
+
+from homeassistant.core import callback
+from homeassistant.helpers.event import async_track_time_interval
 
 from .core.const import DOMAIN
 from .core.entity import XEntity
-from .core.ewelink import SIGNAL_ADD_ENTITIES, XRegistry
+from .core.ewelink import LAN_ONLY, SIGNAL_ADD_ENTITIES, XRegistry
 
 PARALLEL_UPDATES = 0  # fix entity_platform parallel_updates Semaphore
+SCAN_INTERVAL = timedelta(seconds=15)
+LOCAL_POWER_POLL_UIIDS = {32, 181, 182, 190, 262, 277}
+LOCAL_POWER_TELEMETRY_UIDS = {"current", "power", "voltage"}
 
 
 async def async_setup_entry(hass, config_entry, add_entities):
@@ -58,7 +74,7 @@ DEVICE_CLASSES = {
 UNITS = {
     "battery": PERCENTAGE,
     "battery_voltage": UnitOfElectricPotential.VOLT,
-    "co2": CONCENTRATION_PARTS_PER_MILLION,
+    "co2": CONCENTRATION_PPM,
     "cpu_temperature": UnitOfTemperature.CELSIUS,
     "current": UnitOfElectricCurrent.AMPERE,
     "current_supply": UnitOfElectricCurrent.AMPERE,
@@ -66,8 +82,8 @@ UNITS = {
     "outdoor_temp": UnitOfTemperature.CELSIUS,
     "power": UnitOfPower.WATT,
     "power_supply": UnitOfPower.WATT,
-    "pm25": CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-    "pm10": CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+    "pm25": CONCENTRATION_UG_M3,
+    "pm10": CONCENTRATION_UG_M3,
     "remote_temperature": UnitOfTemperature.CELSIUS,
     "rssi": SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     "temperature": UnitOfTemperature.CELSIUS,
@@ -113,9 +129,22 @@ class XSensor(XEntity, SensorEntity):
         XEntity.__init__(self, ewelink, device)
 
         reporting = device.get("reporting", {}).get(self.uid)
+        if (
+            self.uid in LOCAL_POWER_TELEMETRY_UIDS
+            and device.get("extra", {}).get("uiid") in LOCAL_POWER_POLL_UIIDS
+        ):
+            self._attr_force_update = True
+
         if reporting:
             self.report_mint, self.report_maxt, self.report_delta = reporting
             self.report_ts = time.time()
+            self._attr_should_poll = True
+        elif (
+            not LAN_ONLY
+            and self.uid == "power"
+            and device.get("extra", {}).get("uiid") in LOCAL_POWER_POLL_UIIDS
+            and device["params"].get("sledOnline")
+        ):
             self._attr_should_poll = True
 
     def set_state(self, params: dict = None, value: float = None):
@@ -163,6 +192,24 @@ class XSensor(XEntity, SensorEntity):
     async def async_update(self):
         if self.report_value is not None:
             XSensor.set_state(self, value=self.report_value)
+        elif (
+            not LAN_ONLY
+            and self.uid == "power"
+            and self.device["params"].get("sledOnline")
+        ):
+            await XEntity.async_update(self)
+
+    def internal_available(self) -> bool:
+        if not super().internal_available():
+            return False
+        if (
+            LAN_ONLY
+            and self.uid in LOCAL_POWER_TELEMETRY_UIDS
+            and self.device.get("extra", {}).get("uiid") in LOCAL_POWER_POLL_UIIDS
+            and self.device.get("localsensornodata", 0) >= 3
+        ):
+            return False
+        return True
 
 
 class XTemperatureTH(XSensor):
@@ -211,6 +258,7 @@ class XCloudEnergy(XEntity, SensorEntity):
     _attr_should_poll = True
 
     def __init__(self, ewelink: XRegistry, device: dict):
+        self.params = {self.param, "config"}
         XEntity.__init__(self, ewelink, device)
         reporting = device.get("reporting", {})
         self.report_dt, self.report_history = reporting.get(self.uid) or (3600, 0)
@@ -231,7 +279,13 @@ class XCloudEnergy(XEntity, SensorEntity):
             return None
 
     def set_state(self, params: dict):
-        history = self.decode_energy(params[self.param])
+        # Local hundredDaysKwh responses often wrap payload under config
+        if self.param not in params and isinstance(params.get("config"), dict):
+            params = params["config"]
+        value = params.get(self.param)
+        if value is None:
+            return
+        history = self.decode_energy(value)
         if not history:
             return
 
@@ -243,10 +297,13 @@ class XCloudEnergy(XEntity, SensorEntity):
             }
 
     def can_update(self) -> bool:
-        return self.available and self.ewelink.cloud.online
+        # LAN and/or cloud; send() already handles LAN-first with cloud fallback
+        return self.available
 
     async def get_update(self) -> bool:
-        ok = await self.ewelink.send_cloud(self.device, self.get_params, query=False)
+        ok = await self.ewelink.send(
+            self.device, self.get_params, query_cloud=False, timeout_lan=5
+        )
         return ok == "online"
 
     async def async_update(self):
@@ -287,6 +344,8 @@ class XCloudEnergyDualR3(XCloudEnergy, SensorEntity):
 
 
 class XCloudEnergyPOWR3(XCloudEnergy, SensorEntity):
+    """POWR3/S60 historical energy via getHoursKwh (LAN-capable)."""
+
     @staticmethod
     def decode_energy(value: str) -> Optional[list]:
         try:
@@ -296,14 +355,6 @@ class XCloudEnergyPOWR3(XCloudEnergy, SensorEntity):
             ]
         except Exception:
             return None
-
-    def can_update(self) -> bool:
-        return self.available
-
-    async def get_update(self) -> bool:
-        # POWR3 support LAN energy request (POST /zeroconf/getHoursKwh)
-        ok = await self.ewelink.send(self.device, self.get_params, timeout_lan=5)
-        return ok == "online"
 
 
 class XEnergyTotal(XSensor):
@@ -377,6 +428,8 @@ class XWiFiDoorBattery(XSensor):
 
     def internal_available(self) -> bool:
         # device with buggy online status
+        if LAN_ONLY:
+            return self.ewelink.can_local(self.device)
         return self.ewelink.cloud.online
 
 
@@ -549,7 +602,54 @@ class XConnection(XEntity, SensorEntity):
         else:
             value = "local" if local else "none"
 
+        recv = self.device.get("localrecv") or 0
+        telemetry_at = self.device.get("localtelemetry_at") or 0
+        connect_fail_at = self.device.get("localconnectfail_at") or 0
+        switch_at = self.device.get("localswitch_at") or 0
+        now = time.time()
+        attrs = {
+            "localrecv_age_s": round(now - recv, 1) if recv else None,
+            "localsensorfail": self.device.get("localsensorfail", 0),
+            "localsensornodata": self.device.get("localsensornodata", 0),
+            "localsensor_ack_at": self.device.get("localsensorack_at"),
+            "localsensor_ok_at": self.device.get("localsensorok"),
+            "localsensor_nodata_at": self.device.get("localsensornodata_at"),
+            "localsensor_fail_at": self.device.get("localsensorfail_at"),
+            "localtelemetry_at": telemetry_at or None,
+            "localtelemetry_age_s": round(now - telemetry_at, 1)
+            if telemetry_at
+            else None,
+            "localconnectfail": self.device.get("localconnectfail", 0),
+            "localconnectfail_at": connect_fail_at or None,
+            "localconnectfail_age_s": round(now - connect_fail_at, 1)
+            if connect_fail_at
+            else None,
+            "localswitch_at": switch_at or None,
+            "localswitch_age_s": round(now - switch_at, 1) if switch_at else None,
+            "localswitchpending": self.device.get("localswitchpending"),
+            "localswitchnodata": self.device.get("localswitchnodata", 0),
+            "localswitch_nodata_at": self.device.get("localswitchnodata_at"),
+            "host": self.device.get("host"),
+        }
+
+        change = False
         if self._attr_native_value != value:
             self._attr_native_value = value
-            if self.hass:
-                self._async_write_ha_state()
+            change = True
+        if getattr(self, "_attr_extra_state_attributes", None) != attrs:
+            self._attr_extra_state_attributes = attrs
+            change = True
+
+        if change and self.hass:
+            self._async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+
+        @callback
+        def _refresh(_now):
+            self.internal_update(None)
+
+        self.async_on_remove(
+            async_track_time_interval(self.hass, _refresh, timedelta(seconds=15))
+        )

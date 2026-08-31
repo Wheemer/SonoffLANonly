@@ -7,7 +7,6 @@ from homeassistant.config_entries import ConfigEntry, SOURCE_IMPORT
 from homeassistant.const import (
     CONF_DEVICES,
     CONF_DEVICE_CLASS,
-    CONF_MODE,
     CONF_NAME,
     CONF_PASSWORD,
     CONF_PAYLOAD_OFF,
@@ -33,9 +32,14 @@ from .core.const import (
     CONF_DEFAULT_CLASS,
     CONF_DEVICEKEY,
     CONF_RFBRIDGE,
+    CONF_UPDATE_INTERVAL,
     DOMAIN,
 )
-from .core.ewelink import SIGNAL_ADD_ENTITIES, SIGNAL_CONNECTED, XRegistry
+from .core.ewelink import (
+    LOCAL_SENSOR_COMMANDS,
+    SIGNAL_ADD_ENTITIES,
+    XRegistry,
+)
 from .core.ewelink.camera import XCameras
 from .core.ewelink.cloud import APP, AuthError
 from .core.xutils import create_clientsession
@@ -87,6 +91,9 @@ CONFIG_SCHEMA = vol.Schema(
                             vol.Optional(CONF_NAME): cv.string,
                             vol.Optional(CONF_DEVICE_CLASS): vol.Any(str, list),
                             vol.Optional(CONF_DEVICEKEY): cv.string,
+                            vol.Optional(CONF_UPDATE_INTERVAL): vol.All(
+                                vol.Coerce(float), vol.Range(min=1, max=300)
+                            ),
                         },
                         extra=vol.ALLOW_EXTRA,
                     ),
@@ -175,12 +182,15 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             command = params.pop("command", None)
             mode = params.pop("mode", None)
 
+            if mode not in (None, "local"):
+                _LOGGER.error("Only LAN commands are supported in SonoffLANonly")
+                return
+
             if mode == "local":
-                await registry.local.send(device, params, command)
-            elif mode == "cloud":
-                await registry.cloud.send(device, params)
-            elif mode == "api":
-                await registry.cloud.set_device(device, params)
+                if command in LOCAL_SENSOR_COMMANDS:
+                    await registry.send_local(device, command, params)
+                else:
+                    await registry.local.send(device, params, command)
             else:
                 await registry.send(device, params, cmd_lan=command)
 
@@ -209,30 +219,17 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         session = create_clientsession(hass)
         hass.data[DOMAIN][config_entry.entry_id] = registry = XRegistry(session)
 
-    mode = config_entry.options.get(CONF_MODE, "auto")
     data = config_entry.data
 
-    # if has cloud password and not auth
-    if not registry.cloud.auth and data.get(CONF_PASSWORD):
-        try:
-            _LOGGER.debug(f"Login to cloud with APPID {APP[0][:4]}...")
-            await registry.cloud.login(**data)
-            # store country_code for future requests optimisation
-            if not data.get(CONF_COUNTRY_CODE):
-                hass.config_entries.async_update_entry(
-                    config_entry,
-                    data={**data, CONF_COUNTRY_CODE: registry.cloud.country_code},
-                )
-        except Exception as e:
-            _LOGGER.warning(f"Can't login in {mode} mode: {repr(e)}")
-            if mode == "cloud":
-                # can't continue in cloud mode
-                if isinstance(e, AuthError):
-                    raise ConfigEntryAuthFailed(e)
-                raise ConfigEntryNotReady(e)
+    # Remove the obsolete upstream mode option before registering the update
+    # listener. SonoffLANonly always uses LAN for runtime communication.
+    if "mode" in config_entry.options:
+        hass.config_entries.async_update_entry(
+            config_entry,
+            options={k: v for k, v in config_entry.options.items() if k != "mode"},
+        )
 
-    if not config_entry.update_listeners:
-        config_entry.add_update_listener(async_update_options)
+    config_entry.async_on_unload(config_entry.add_update_listener(async_update_options))
 
     config_entry.async_on_unload(
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, registry.stop)
@@ -243,45 +240,52 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     devices: list[dict] | None = None
     store = Store(hass, 1, f"{DOMAIN}/{config_entry.data['username']}.json")
+    registry.store = store
 
-    # if auth OK - load devices from cloud
-    if registry.cloud.auth:
+    if devices := await store.async_load():
+        _LOGGER.debug(f"{len(devices)} devices loaded from Cache")
+
+    # LAN-only runtime still needs cloud once to seed encrypted device metadata/keys.
+    if not devices and data.get(CONF_PASSWORD):
         try:
+            _LOGGER.debug(f"Login to cloud with APPID {APP[0][:4]} for LAN cache...")
+            await registry.cloud.login(**data)
+            if not data.get(CONF_COUNTRY_CODE):
+                hass.config_entries.async_update_entry(
+                    config_entry,
+                    data={**data, CONF_COUNTRY_CODE: registry.cloud.country_code},
+                )
+
             homes = config_entry.options.get("homes")
             devices = await registry.cloud.get_devices(homes)
-            _LOGGER.debug(f"{len(devices)} devices loaded from Cloud")
+            _LOGGER.debug(f"{len(devices)} devices loaded from Cloud for LAN cache")
 
             # store devices to cache
             await store.async_save(devices)
 
         except Exception as e:
-            _LOGGER.warning("Can't load devices", exc_info=e)
-
-    if not devices:
-        if devices := await store.async_load():
-            _LOGGER.debug(f"{len(devices)} devices loaded from Cache")
+            _LOGGER.warning("Can't seed LAN cache from cloud", exc_info=e)
+            if isinstance(e, AuthError):
+                raise ConfigEntryAuthFailed(e)
 
     if devices:
         # we need to setup_devices before local.start
         devices = internal_unique_devices(config_entry.entry_id, devices)
         entities = registry.setup_devices(devices)
+        if data.get(CONF_PASSWORD):
+            registry.metadata_task = hass.async_create_task(
+                registry.refresh_cache_metadata(data, config_entry.options)
+            )
     else:
         entities = None
 
-    if mode in ("auto", "cloud") and config_entry.data.get(CONF_PASSWORD):
-        registry.cloud.start(**config_entry.data)
+    registry.local.start(await zeroconf.async_get_instance(hass))
+    registry.local_connected()
 
-    if mode in ("auto", "local"):
-        registry.local.start(await zeroconf.async_get_instance(hass))
-
-    _LOGGER.debug(mode.upper() + " mode start")
+    _LOGGER.debug("LOCAL mode start")
 
     # at this moment we hold EVENT_HOMEASSISTANT_START event
-    if registry.cloud.task:
-        # we get cloud connected signal even with a cloud error, so we won't
-        # hold Hass start event forever
-        await registry.cloud.dispatcher_wait(SIGNAL_CONNECTED)
-    elif registry.local.online:
+    if registry.local.online:
         # we hope that most of local devices will be discovered in 3 seconds
         await asyncio.sleep(3)
 
@@ -300,15 +304,18 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry):
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not ok:
+        return False
 
-    registry: XRegistry = hass.data[DOMAIN][entry.entry_id]
-    await registry.stop()
+    registry: XRegistry | None = hass.data[DOMAIN].pop(entry.entry_id, None)
+    if registry:
+        await registry.stop()
 
     internal_free_devices(entry.entry_id)
 
-    return ok
+    return True
 
 
 def internal_unique_devices(uid: str, devices: list) -> list:

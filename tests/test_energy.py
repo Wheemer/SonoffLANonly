@@ -1,6 +1,46 @@
 from . import DEVICEID, init
 
 
+def _assert_local_config_energy(uiid: int):
+    """Historical energy entities for POW/POWR2/S40 share the same LAN shape."""
+    reg, entities = init(
+        {"extra": {"uiid": uiid}},
+        {"devices": {DEVICEID: {"reporting": {"energy": [3600, 999]}}}},
+    )
+
+    reg.dispatcher_send(
+        DEVICEID,
+        {
+            "config": {
+                "hundredDaysKwhData": "000002000002000001000002000000000001"
+            }
+        },
+    )
+
+    energy = next(e for e in entities if e.uid == "energy")
+    assert energy.state == 0.02
+    assert energy.extra_state_attributes["history"] == [
+        0.02,
+        0.02,
+        0.01,
+        0.02,
+        0.0,
+        0.01,
+    ]
+
+
+def test_energy_accepts_local_config_response_pow():
+    _assert_local_config_energy(5)
+
+
+def test_energy_accepts_local_config_response_powr2():
+    _assert_local_config_energy(32)
+
+
+def test_energy_accepts_local_config_response_s40():
+    _assert_local_config_energy(182)
+
+
 def test_pow1_energy():
     reg, entities = init(
         {"extra": {"uiid": 5}},  # ACS 16A

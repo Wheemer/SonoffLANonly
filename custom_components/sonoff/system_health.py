@@ -26,17 +26,13 @@ def async_register(
 
 
 async def system_health_info(hass: HomeAssistant):
-    cloud_online = local_online = cloud_total = local_total = 0
+    local_online = local_total = 0
 
     for registry in hass.data[DOMAIN].values():
         for device in registry.devices.values():
-            if "online" in device:
-                cloud_total += 1
-                if registry.cloud.online and device["online"]:
-                    cloud_online += 1
             if "local" in device:
                 local_total += 1
-                if registry.local.online and device["local"]:
+                if registry.can_local(device):
                     local_online += 1
 
     source_hash = await hass.async_add_executor_job(xutils.source_hash)
@@ -44,7 +40,6 @@ async def system_health_info(hass: HomeAssistant):
     integration = hass.data["integrations"][DOMAIN]
     info = {
         "version": f"{integration.version} ({source_hash})",
-        "cloud_online": f"{cloud_online} / {cloud_total}",
         "local_online": f"{local_online} / {local_total}",
     }
 

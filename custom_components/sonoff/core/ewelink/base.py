@@ -32,6 +32,23 @@ class XDevice(TypedDict, total=False):
     localfail: Optional[int]
     localrecv: Optional[float]
     localping: Optional[float]
+    localsensorping: Optional[float]
+    localsensorfail: Optional[int]
+    localsensorfail_at: Optional[float]
+    localsensorack_at: Optional[float]
+    localsensorok: Optional[float]
+    localsensorpending: Optional[float]
+    localsensornodata: Optional[int]
+    localsensornodata_at: Optional[float]
+    localtelemetry_at: Optional[float]
+    localconnectfail: Optional[int]
+    localconnectfail_at: Optional[float]
+    localswitch_at: Optional[float]
+    localswitchpending: Optional[float]
+    localswitchnodata: Optional[int]
+    localswitchnodata_at: Optional[float]
+    mdns_service: Optional[str]
+    update_interval: Optional[float]
 
     cloud_seq: int | None  # sequence for update from cloud (if exists - cmd from app)
     local_seq: int | None  # sequence for update from local

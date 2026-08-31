@@ -1,16 +1,21 @@
 ---
-name: Bug report or Feature request
-about: Default issue
+name: Bug report or feature request
+about: Report a SonoffLANonly problem or request an improvement
 title: ''
 labels: ''
 assignees: ''
-
 ---
 
 <!--
-- Write issue ONLY in English
-- Search if similar issue already exist, also check closed issues, DO NOT CREATE DUPLICATES
-- Check Integration errors in Hass logs (Configuration > Logs), maybe answer there
-- Check Integration debug (readme) for something useful
-- Read the readme carefully, maybe the answer is there
+Please search open and closed issues before filing a duplicate.
+
+For a bug, include:
+- Home Assistant and SonoffLANonly versions
+- Device model and UIID
+- Whether the device is visible and controllable in the eWeLink app
+- Relevant Home Assistant logs
+- Integration diagnostics with credentials and device keys removed
+
+This fork intentionally has no cloud command or state fallback. Confirm that the
+device is reachable from the Home Assistant host over the local network.
 -->

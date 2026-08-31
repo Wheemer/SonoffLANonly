@@ -9,6 +9,8 @@ from custom_components.sonoff.core.entity import XEntity
 from custom_components.sonoff.core.ewelink import SIGNAL_ADD_ENTITIES, XRegistry
 
 DEVICEID = "1000123abc"
+_REAL_CREATE_TASK = asyncio.create_task
+_REAL_GET_RUNNING_LOOP = asyncio.get_running_loop
 
 
 class DummyRegistry(XRegistry):
@@ -37,6 +39,10 @@ def init(device: dict, config: dict = None) -> (XRegistry, List[XEntity]):
         device.setdefault("name", "Device1")
         device.setdefault("deviceid", DEVICEID)
         device.setdefault("online", True)
+        device.setdefault("local", True)
+        device.setdefault("localfail", 0)
+        device.setdefault("localping", 0)
+        device.setdefault("localrecv", 0)
         device.setdefault("extra", {"uiid": 0})
         params = device.setdefault("params", {})
         params.setdefault("staMac", "FF:FF:FF:FF:FF:FF")
@@ -48,6 +54,7 @@ def init(device: dict, config: dict = None) -> (XRegistry, List[XEntity]):
 
     reg = DummyRegistry()
     reg.cloud.online = True
+    reg.local.online = True
     reg.config = config
     reg.dispatcher_connect(SIGNAL_ADD_ENTITIES, lambda x: entities.extend(x))
     entities += reg.setup_devices(devices)

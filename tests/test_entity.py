@@ -23,8 +23,7 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 from homeassistant.util import dt
 
 from custom_components.sonoff import CONFIG_SCHEMA, remote
-from custom_components.sonoff.binary_sensor import XBinarySensor, XHumanSensor, \
-    XRemoteSensor
+from custom_components.sonoff.binary_sensor import XBinarySensor, XHumanSensor, XRemoteSensor
 from custom_components.sonoff.button import XRemoteButton, XT5Effect
 from custom_components.sonoff.climate import XClimateNS, XThermostat
 from custom_components.sonoff.core import devices
@@ -76,7 +75,6 @@ from . import DEVICEID, DummyRegistry, init, save_to
 
 from datetime import timedelta
 from types import SimpleNamespace
-
 
 def get_entitites(device: Union[dict, list], config: dict = None) -> list:
     return init(device, config)[1]
@@ -136,25 +134,136 @@ def test_simple_switch():
     assert rssi.entity_registry_enabled_default is False
 
 
+def test_power_entity_telemetry_polled_via_run_forever(monkeypatch):
+    device = {
+        "name": "Plug",
+        "deviceid": DEVICEID,
+        "extra": {"uiid": 182},
+        "local": True,
+        "localrecv": 0,
+        "localsensorping": 0,
+        "update_interval": 15,
+        "localping": 9999,
+        "params": {
+            "sledOnline": "on",
+            "current": 0.5,
+            "power": 12.3,
+            "voltage": 121.5,
+        },
+    }
+    entities = get_entitites(device)
+    power = next(e for e in entities if isinstance(e, XSensor) and e.uid == "power")
+    current = next(e for e in entities if isinstance(e, XSensor) and e.uid == "current")
+    voltage = next(e for e in entities if isinstance(e, XSensor) and e.uid == "voltage")
+    calls = []
+
+    async def send_local(*args):
+        calls.append(args)
+
+    def create_task(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    power.ewelink.send_local = send_local
+    asyncio.run(power.ewelink.update_local(power.device, 20))
+
+    assert power.should_poll is False
+    assert current.should_poll is False
+    assert voltage.should_poll is False
+    assert power.force_update is True
+    assert current.force_update is True
+    assert voltage.force_update is True
+    assert calls == [(power.device, "sledonline", {"sledOnline": "on"})]
+    assert power.device["localsensorping"] == 35
+
+
 def test_available():
     entities = get_entitites(
         {
             "extra": {"uiid": 1},
+            "local": False,
             "params": {"switch": "on"},
         }
     )
     switch: XSwitch = entities[0]
-    assert switch.hass.states.get(switch.entity_id).state == "on"
+    assert switch.hass.states.get(switch.entity_id).state == "unavailable"
 
-    # only cloud online changed
+    # cloud state changes don't affect availability in SonoffLANonly
     msg = {"deviceid": DEVICEID, "params": {"online": False}}
     switch.ewelink.cloud.dispatcher_send(SIGNAL_UPDATE, msg)
     assert switch.hass.states.get(switch.entity_id).state == "unavailable"
 
-    # cloud state changed (also change available)
+    # cloud state changes can update cached state, but still don't make it available
     msg = {"deviceid": DEVICEID, "params": {"switch": "off"}}
     switch.ewelink.cloud.dispatcher_send(SIGNAL_UPDATE, msg)
+    assert switch.hass.states.get(switch.entity_id).state == "unavailable"
+
+    switch.ewelink.local.online = True
+    msg = {
+        "deviceid": DEVICEID,
+        "params": {"switch": "off"},
+        "host": "192.168.1.2:8081",
+        "localtype": "plug",
+    }
+    switch.ewelink.local.dispatcher_send(SIGNAL_UPDATE, msg)
     assert switch.hass.states.get(switch.entity_id).state == "off"
+
+
+def test_connection_sensor_exposes_lan_polling_diagnostics():
+    entities = get_entitites(
+        {
+            "extra": {"uiid": 182},
+            "local": True,
+            "host": "192.168.1.2:8081",
+            "params": {"sledOnline": "on"},
+        }
+    )
+    conn = next(e for e in entities if getattr(e, "uid", None) == "connection")
+    conn.device.update(
+        {
+            "localrecv": time.time() - 12,
+            "localsensorfail": 2,
+            "localsensornodata": 3,
+            "localsensorack_at": 1000.0,
+            "localsensorok": 1100.0,
+            "localsensornodata_at": 950.0,
+            "localtelemetry_at": 1100.0,
+        }
+    )
+    conn.internal_update(None)
+    attrs = conn._attr_extra_state_attributes
+    assert attrs["localsensorfail"] == 2
+    assert attrs["localsensornodata"] == 3
+    assert attrs["localsensor_ack_at"] == 1000.0
+    assert attrs["localsensor_ok_at"] == 1100.0
+    assert attrs["localsensor_nodata_at"] == 950.0
+    assert attrs["localtelemetry_at"] == 1100.0
+    assert attrs["localtelemetry_age_s"] >= 12
+    assert attrs["localrecv_age_s"] >= 12
+
+
+def test_connection_diagnostics_age_refreshes_without_dispatcher(monkeypatch):
+    t0 = 1000.0
+    monkeypatch.setattr("custom_components.sonoff.sensor.time.time", lambda: t0)
+    entities = get_entitites(
+        {
+            "extra": {"uiid": 182},
+            "local": True,
+            "host": "192.168.1.2:8081",
+            "params": {"sledOnline": "on"},
+        }
+    )
+    conn = next(e for e in entities if getattr(e, "uid", None) == "connection")
+    conn.device["localtelemetry_at"] = 900.0
+    conn.internal_update(None)
+    assert conn._attr_extra_state_attributes["localtelemetry_age_s"] == 100.0
+
+    monkeypatch.setattr("custom_components.sonoff.sensor.time.time", lambda: 1120.0)
+    conn.internal_update(None)
+    assert conn._attr_extra_state_attributes["localtelemetry_age_s"] == 220.0
 
 
 def test_nospec():
@@ -743,9 +852,15 @@ def test_wifi_sensor():
         "friendly_name": "Device1 Battery Voltage",
     }
 
+    sensor.device["local"] = False
     sensor.ewelink.cloud.online = False
     sensor.ewelink.cloud.dispatcher_send(SIGNAL_CONNECTED)
     assert sensor.hass.states.get(sensor.entity_id).state == "unavailable"
+
+    sensor.device["host"] = "192.168.1.2:8081"
+    sensor.device["local"] = True
+    sensor.internal_update(None)
+    assert sensor.hass.states.get(sensor.entity_id).state == "2.1"
 
 
 def test_zigbee_button():
@@ -1199,8 +1314,8 @@ def test_local_devicekey():
 
 
 # https://www.avrfreaks.net/sites/default/files/forum_attachments/AT08550_ZigBee_Attribute_Reporting_0.pdf
-def test_reporting():
-    time.time = lambda: 0
+def test_reporting(monkeypatch):
+    monkeypatch.setattr(time, "time", lambda: 0)
 
     entities = get_entitites(
         {
@@ -1220,12 +1335,12 @@ def test_reporting():
     assert temp.state == 14.6
 
     # automatic update value after 30 seconds (Hass force_update logic)
-    time.time = lambda: 30
+    monkeypatch.setattr(time, "time", lambda: 30)
     await_(temp.async_update())
     assert temp.state == 20
 
     # lower than reportable change value - no update
-    time.time = lambda: 40
+    monkeypatch.setattr(time, "time", lambda: 40)
     temp.set_state({"temperature": 20.3})
     assert temp.state == 20
 
@@ -1234,7 +1349,7 @@ def test_reporting():
     assert temp.state == 21
 
     # update after max report interval - update
-    time.time = lambda: 140
+    monkeypatch.setattr(time, "time", lambda: 140)
     temp.set_state({"temperature": 21.1})
     assert temp.state == 21.1
 

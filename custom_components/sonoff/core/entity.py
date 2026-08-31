@@ -116,8 +116,9 @@ class XEntity(Entity):
         pass
 
     def internal_available(self) -> bool:
-        ok = self.ewelink.can_cloud(self.device) or self.ewelink.can_local(self.device)
-        return ok
+        return self.ewelink.can_cloud(self.device) or self.ewelink.can_local(
+            self.device
+        )
 
     def internal_update(self, params: dict = None):
         available = self.internal_available()

@@ -1,6 +1,5 @@
 from aiohttp import ClientSession
-from homeassistant.const import EVENT_HOMEASSISTANT_CLOSE
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from multidict import CIMultiDict
 
@@ -45,15 +44,7 @@ def system_log_records(hass: HomeAssistant, domain: str) -> list | str:
 
 
 def create_clientsession(hass: HomeAssistant) -> ClientSession:
-    # shoul use create_clientsession for custom User-Agent
-    # can't use auto_cleanup, because session will be closed on integration restart
-    session = async_create_clientsession(hass, auto_cleanup=False)
-
-    @callback
-    def _async_close_websession(*args) -> None:
-        session.detach()
-
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_CLOSE, _async_close_websession)
+    session = async_create_clientsession(hass)
 
     integration = hass.data["integrations"][DOMAIN]
     session._default_headers = CIMultiDict(

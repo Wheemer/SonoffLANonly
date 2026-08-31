@@ -3,11 +3,11 @@ from functools import lru_cache
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
-from homeassistant.const import CONF_MODE, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .core.const import CONF_COUNTRY_CODE, CONF_DEBUG, CONF_MODES, DOMAIN
+from .core.const import CONF_COUNTRY_CODE, CONF_DEBUG, DOMAIN
 from .core.ewelink import XRegistryCloud
 from .core.ewelink.cloud import REGIONS
 
@@ -120,15 +120,18 @@ class OptionsFlowHandler(OptionsFlow):
             if home not in homes:
                 homes[home] = home
 
-        data = vol_schema(
-            {
-                vol.Optional(CONF_MODE, default="auto"): vol.In(CONF_MODES),
-                vol.Optional(CONF_DEBUG, default=False): bool,
-                vol.Optional("homes"): cv.multi_select(homes),
-            },
-            dict(self.config_entry.options),
-        )
+        data = options_schema(homes, dict(self.config_entry.options))
         return self.async_show_form(step_id="init", data_schema=data)
+
+
+def options_schema(homes: dict, defaults: dict | None = None) -> vol.Schema:
+    return vol_schema(
+        {
+            vol.Optional(CONF_DEBUG, default=False): bool,
+            vol.Optional("homes"): cv.multi_select(homes),
+        },
+        defaults,
+    )
 
 
 def vol_schema(schema: dict, defaults: dict | None) -> vol.Schema:
