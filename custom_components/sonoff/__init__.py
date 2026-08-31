@@ -30,6 +30,7 @@ from .core.const import (
     CONF_APPSECRET,
     CONF_COUNTRY_CODE,
     CONF_DEFAULT_CLASS,
+    CONF_DEVICE_UPDATE_INTERVALS,
     CONF_DEVICEKEY,
     CONF_RFBRIDGE,
     CONF_UPDATE_INTERVAL,
@@ -218,6 +219,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     if not registry:
         session = create_clientsession(hass)
         hass.data[DOMAIN][config_entry.entry_id] = registry = XRegistry(session)
+
+    registry.config_entry = config_entry
+    registry.device_update_intervals = dict(
+        config_entry.options.get(CONF_DEVICE_UPDATE_INTERVALS, {})
+    )
 
     data = config_entry.data
 

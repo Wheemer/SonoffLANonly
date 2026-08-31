@@ -18,6 +18,7 @@ LOCAL_RETRY_SECONDS = 15
 LOCAL_SENSOR_DEFAULT_SECONDS = 30
 LOCAL_POLL_LOOP_SECONDS = 1
 LOCAL_SENSOR_COMMANDS = frozenset({"sledonline", "statistics", "uiActive"})
+LOCAL_SENSOR_POLL_UIIDS = frozenset({15, 32, 126, 181, 182, 190, 262, 277})
 LOCAL_TELEMETRY_WAIT_SECONDS = 15
 LOCAL_TELEMETRY_MDNS_POLL_SECONDS = 2
 LOCAL_SWITCH_WAIT_SECONDS = 5
@@ -75,6 +76,8 @@ class XRegistry(XRegistryBase):
         super().__init__(session)
 
         self.devices: dict[str, XDevice] = {}
+        self.config_entry = None
+        self.device_update_intervals: dict[str, float] = {}
         self.store = None
         self.store_task = None
         self.metadata_task: asyncio.Task | None = None
@@ -115,6 +118,9 @@ class XRegistry(XRegistryBase):
             except Exception:
                 pass
 
+            if did in self.device_update_intervals:
+                device["update_interval"] = self.device_update_intervals[did]
+
             for key in LOCAL_RUNTIME_DEVICE_KEYS:
                 device.pop(key, None)
             if device.get("host"):
@@ -138,7 +144,12 @@ class XRegistry(XRegistryBase):
 
                 # at this moment entities can catch signals with device_id and
                 # update their states, but they can be added to hass later
-                entities += [cls(self, device) for cls in get_spec(device)]
+                classes = list(get_spec(device))
+                if uiid in LOCAL_SENSOR_POLL_UIIDS:
+                    from ...number import XUpdateInterval
+
+                    classes.append(XUpdateInterval)
+                entities += [cls(self, device) for cls in classes]
 
                 self.devices[did] = device
 

@@ -102,7 +102,8 @@ class OptionsFlowHandler(OptionsFlow):
 
     async def async_step_init(self, data: dict = None):
         if data is not None:
-            return self.async_create_entry(title="", data=data)
+            options = merge_options(self.config_entry.options, data)
+            return self.async_create_entry(title="", data=options)
 
         homes = {}
 
@@ -132,6 +133,11 @@ def options_schema(homes: dict, defaults: dict | None = None) -> vol.Schema:
         },
         defaults,
     )
+
+
+def merge_options(current: dict, submitted: dict) -> dict:
+    """Keep hidden per-device options when the visible form is saved."""
+    return {**current, **submitted}
 
 
 def vol_schema(schema: dict, defaults: dict | None) -> vol.Schema:

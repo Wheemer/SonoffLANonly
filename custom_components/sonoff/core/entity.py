@@ -18,6 +18,7 @@ ENTITY_CATEGORIES = {
     "rssi": EntityCategory.DIAGNOSTIC,
     "sensitivity": EntityCategory.CONFIG,
     "temperature_correction": EntityCategory.CONFIG,
+    "update_interval": EntityCategory.CONFIG,
 }
 
 ICONS = {
@@ -25,6 +26,7 @@ ICONS = {
     "dusty": "mdi:cloud",
     "led": "mdi:led-off",
     "noise": "mdi:bell-ring",
+    "update_interval": "mdi:update",
 }
 
 NAMES = {
@@ -35,6 +37,7 @@ NAMES = {
     "pm10": "PM10",
     "pulse": "INCHING",
     "pulseWidth": "INCHING Duration",
+    "update_interval": "Update interval",
 }
 
 

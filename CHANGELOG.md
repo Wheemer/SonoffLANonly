@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.12.2.4
+
+- Add a persisted **Update interval** Number control to the Configuration section of every device that supports active local telemetry refresh.
+- Keep the existing 30-second default and YAML values while allowing per-device UI values from 1 to 300 seconds.
+- Make a saved UI value override YAML for that device and preserve it when other integration options are changed.
+
 ## 3.12.2.3
 
 - Publish the integration as SonoffLANonly with LAN-only runtime control, state, and availability.

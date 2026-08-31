@@ -1,7 +1,7 @@
 from homeassistant.components.number import NumberEntity, NumberMode
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import UnitOfTemperature, UnitOfTime
 
-from .core.const import DOMAIN
+from .core.const import CONF_DEVICE_UPDATE_INTERVALS, DOMAIN
 from .core.entity import XEntity
 from .core.ewelink import SIGNAL_ADD_ENTITIES, XRegistry
 
@@ -34,6 +34,38 @@ class XNumber(XEntity, NumberEntity):
         if self.multiply:
             value /= self.multiply
         await self.ewelink.send(self.device, {self.param: int(value)})
+
+
+class XUpdateInterval(XEntity, NumberEntity):
+    """Per-device stale-telemetry watchdog interval."""
+
+    uid = "update_interval"
+
+    _attr_native_min_value = 1
+    _attr_native_max_value = 300
+    _attr_native_step = 1
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, ewelink: XRegistry, device: dict) -> None:
+        super().__init__(ewelink, device)
+        self._attr_native_value = ewelink._sensor_update_interval(device)
+
+    async def async_set_native_value(self, value: float) -> None:
+        value = max(1, min(int(value), 300))
+        deviceid = self.device["deviceid"]
+
+        self.device["update_interval"] = value
+        self._attr_native_value = value
+        if self.hass:
+            self._async_write_ha_state()
+
+        entry = self.ewelink.config_entry
+        options = dict(entry.options)
+        intervals = dict(options.get(CONF_DEVICE_UPDATE_INTERVALS, {}))
+        intervals[deviceid] = value
+        options[CONF_DEVICE_UPDATE_INTERVALS] = intervals
+        self.hass.config_entries.async_update_entry(entry, options=options)
 
 
 class XPulseWidth(XNumber):

@@ -63,7 +63,9 @@ Use the integration options to select eWeLink homes or enable the debug page. Ne
 
 Local callbacks remain authoritative. `update_interval` is the maximum age allowed for supported realtime telemetry before the integration prompts the device for a fresh local publication. It is not a blind poll when callbacks are already arriving.
 
-The default is `30` seconds. Configure exceptions in `configuration.yaml` by eWeLink device ID:
+The default is `30` seconds. Supported devices expose **Update interval** as a Number entity in the device page's **Configuration** section. Set it from `1` through `300` seconds; the value is stored in the SonoffLANonly config entry and survives reloads, updates, and restarts.
+
+You can also provide initial or fallback values in `configuration.yaml` by eWeLink device ID:
 
 ```yaml
 sonoff:
@@ -75,6 +77,8 @@ sonoff:
 ```
 
 Allowed values are `1` through `300` seconds. Restart Home Assistant after changing YAML.
+
+A value saved through the device's **Update interval** control overrides YAML for that device. This keeps existing YAML defaults intact while allowing normal adjustments from the Home Assistant UI.
 
 The interval only affects devices and telemetry commands supported by their local firmware. A shorter interval cannot make a device publish data more quickly than its firmware permits, and one-second intervals increase local network traffic.
 

@@ -50,7 +50,7 @@ from custom_components.sonoff.light import (
     XT5EffectStatus,
     XT5Light,
 )
-from custom_components.sonoff.number import XNumber, XPulseWidth
+from custom_components.sonoff.number import XNumber, XPulseWidth, XUpdateInterval
 from custom_components.sonoff.select import XSelectStartup
 from custom_components.sonoff.sensor import (
     XButtonKey,
@@ -86,6 +86,74 @@ def await_(coro):
         return loop.run_until_complete(coro)
     finally:
         loop.close()
+
+
+def test_update_interval_number_is_visible_and_persisted_per_device():
+    registry, entities = init(
+        {
+            "extra": {"uiid": 182},
+            "params": {"sledOnline": "on", "power": "1.00"},
+        },
+        {"devices": {DEVICEID: {"update_interval": 15}}},
+    )
+    interval: XUpdateInterval = next(
+        entity for entity in entities if isinstance(entity, XUpdateInterval)
+    )
+
+    assert interval.native_value == 15
+    assert interval.native_min_value == 1
+    assert interval.native_max_value == 300
+    assert interval.unique_id == f"{DEVICEID}_update_interval"
+
+    entry = SimpleNamespace(options={"debug": False})
+    updates = []
+    registry.config_entry = entry
+    interval.hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_update_entry=lambda target, **kwargs: updates.append(
+                (target, kwargs)
+            )
+        )
+    )
+    interval._async_write_ha_state = lambda: None
+
+    asyncio.run(interval.async_set_native_value(1))
+
+    assert interval.native_value == 1
+    assert interval.device["update_interval"] == 1
+    assert updates == [
+        (
+            entry,
+            {
+                "options": {
+                    "debug": False,
+                    "device_update_intervals": {DEVICEID: 1},
+                }
+            },
+        )
+    ]
+
+
+def test_ui_update_interval_overrides_yaml_value():
+    registry = DummyRegistry()
+    registry.config = {"devices": {DEVICEID: {"update_interval": 15}}}
+    registry.device_update_intervals = {DEVICEID: 1}
+    device = {
+        "deviceid": DEVICEID,
+        "name": "Device1",
+        "online": True,
+        "local": True,
+        "extra": {"uiid": 182},
+        "params": {"sledOnline": "on", "power": "1.00"},
+    }
+
+    entities = registry.setup_devices([device])
+    interval: XUpdateInterval = next(
+        entity for entity in entities if isinstance(entity, XUpdateInterval)
+    )
+
+    assert device["update_interval"] == 1
+    assert interval.native_value == 1
 
 
 def test_simple_switch():
