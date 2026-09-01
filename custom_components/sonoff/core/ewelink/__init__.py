@@ -96,8 +96,18 @@ class XRegistry(XRegistryBase):
     def _track_telemetry_task(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
         self._local_telemetry_tasks.add(task)
-        task.add_done_callback(self._local_telemetry_tasks.discard)
+        task.add_done_callback(self._telemetry_task_done)
         return task
+
+    def _telemetry_task_done(self, task: asyncio.Task):
+        self._local_telemetry_tasks.discard(task)
+        if task.cancelled():
+            return
+        if exc := task.exception():
+            _LOGGER.warning(
+                "Local telemetry recovery task failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
 
     def setup_devices(self, devices: list[XDevice]) -> list:
         from ..devices import get_spec
@@ -518,8 +528,18 @@ class XRegistry(XRegistryBase):
             await asyncio.sleep(LOCAL_TELEMETRY_MDNS_POLL_SECONDS)
 
         ts = time.time()
+        misses = device.get("localsensornodata", 0) + 1
+        if misses >= 3:
+            await self.local.restart_browser()
+            await asyncio.sleep(0)
+            await self._pull_mdns_bounded(device)
+            if (device.get("localtelemetry_at") or 0) >= poll_ts:
+                device.pop("localsensorpending", None)
+                self.dispatcher_send(device["deviceid"], None)
+                return
+
         device["localsensornodata_at"] = ts
-        device["localsensornodata"] = device.get("localsensornodata", 0) + 1
+        device["localsensornodata"] = misses
         device["localsensorfail_at"] = ts
         interval = self._sensor_update_interval(device)
         device["localsensorping"] = ts + min(

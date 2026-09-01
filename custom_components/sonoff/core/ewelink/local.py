@@ -83,6 +83,11 @@ class XRegistryLocal(XRegistryBase):
     online: bool = False
     zeroconf: Zeroconf | None = None
 
+    def __init__(self, session: aiohttp.ClientSession):
+        super().__init__(session)
+        self._browser_restart_lock = asyncio.Lock()
+        self._browser_restart_at: float | None = None
+
     def start(self, zeroconf: Zeroconf):
         self.zeroconf = zeroconf
         self.browser = AsyncServiceBrowser(
@@ -99,6 +104,29 @@ class XRegistryLocal(XRegistryBase):
             await self.browser.async_cancel()
             self.browser = None
         self.zeroconf = None
+
+    async def restart_browser(self, cooldown: float = 10.0) -> bool:
+        """Restart a stalled mDNS browser without restarting the integration."""
+        async with self._browser_restart_lock:
+            if not self.online or not self.zeroconf:
+                return False
+
+            now = asyncio.get_running_loop().time()
+            if (
+                self.browser
+                and self._browser_restart_at is not None
+                and now - self._browser_restart_at < cooldown
+            ):
+                return False
+
+            if self.browser:
+                await self.browser.async_cancel()
+            self.browser = AsyncServiceBrowser(
+                self.zeroconf, SERVICE_TYPE, [self._handler1]
+            )
+            self._browser_restart_at = now
+            _LOGGER.warning("Restarted stalled eWeLink mDNS browser")
+            return True
 
     def _handler1(
         self,

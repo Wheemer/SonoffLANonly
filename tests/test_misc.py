@@ -532,6 +532,35 @@ def test_verify_sensor_telemetry_marks_nodata_when_payload_missing():
     assert device.get("localsensorfail", 0) == 0
 
 
+def test_verify_sensor_telemetry_restarts_browser_on_third_miss():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    device = XDevice(
+        deviceid=DEVICEID, local=True, localsensornodata=2
+    )
+    registry.devices = {DEVICEID: device}
+    restarted = []
+
+    async def pull_mdns(dev, **kwargs):
+        return False
+
+    async def restart_browser():
+        restarted.append(True)
+        return True
+
+    registry._pull_mdns_bounded = pull_mdns
+    registry.local.restart_browser = restart_browser
+    loop.run_until_complete(
+        registry._verify_sensor_telemetry(device, time.time(), wait_seconds=0)
+    )
+    loop.close()
+
+    assert restarted == [True]
+    assert device["localsensornodata"] == 3
+
+
 def test_verify_sensor_telemetry_pulls_mdns_until_payload_arrives(monkeypatch):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -994,6 +1023,36 @@ def test_local_send_reraises_cancelled_error():
     with pytest.raises(asyncio.CancelledError):
         loop.run_until_complete(registry.send(device, {"switch": "on"}))
     loop.close()
+
+
+def test_local_restart_browser_replaces_stalled_browser(monkeypatch):
+    class Browser:
+        def __init__(self):
+            self.cancelled = False
+
+        async def async_cancel(self):
+            self.cancelled = True
+
+    old_browser = Browser()
+    new_browser = Browser()
+    monkeypatch.setattr(
+        "custom_components.sonoff.core.ewelink.local.AsyncServiceBrowser",
+        lambda *args: new_browser,
+    )
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    registry = XRegistryLocal(None)
+    registry.online = True
+    registry.zeroconf = object()
+    registry.browser = old_browser
+
+    restarted = loop.run_until_complete(registry.restart_browser())
+    loop.close()
+
+    assert restarted
+    assert old_browser.cancelled
+    assert registry.browser is new_browser
 
 
 def test_local_ack_only_command_does_not_fake_switch_state():

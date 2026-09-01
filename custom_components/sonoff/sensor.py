@@ -199,19 +199,6 @@ class XSensor(XEntity, SensorEntity):
         ):
             await XEntity.async_update(self)
 
-    def internal_available(self) -> bool:
-        if not super().internal_available():
-            return False
-        if (
-            LAN_ONLY
-            and self.uid in LOCAL_POWER_TELEMETRY_UIDS
-            and self.device.get("extra", {}).get("uiid") in LOCAL_POWER_POLL_UIIDS
-            and self.device.get("localsensornodata", 0) >= 3
-        ):
-            return False
-        return True
-
-
 class XTemperatureTH(XSensor):
     params = {"currentTemperature", "temperature"}
     uid = "temperature"

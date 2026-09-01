@@ -336,6 +336,21 @@ def test_connection_sensor_exposes_lan_polling_diagnostics():
     assert attrs["localrecv_age_s"] >= 12
 
 
+def test_power_sensor_stays_available_after_missing_telemetry_callbacks():
+    entities = get_entitites(
+        {
+            "extra": {"uiid": 182},
+            "local": True,
+            "host": "192.168.1.2:8081",
+            "params": {"sledOnline": "on", "power": "1.00"},
+            "localsensornodata": 3,
+        }
+    )
+    power = next(e for e in entities if getattr(e, "uid", None) == "power")
+
+    assert power.internal_available()
+
+
 def test_connection_diagnostics_age_refreshes_without_dispatcher(monkeypatch):
     t0 = 1000.0
     monkeypatch.setattr("custom_components.sonoff.sensor.time.time", lambda: t0)

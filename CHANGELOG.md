@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.12.2.6
+
+- Keep realtime LAN sensors available while their device remains locally reachable instead of treating missing callback payloads as device failure.
+- Restart a stalled eWeLink mDNS browser after repeated missed telemetry callbacks so local readings recover without reloading the integration.
+- Log background telemetry recovery failures instead of allowing task exceptions to disappear silently.
+
 ## 3.12.2.5
 
 - Expose one **Update interval** control for every top-level Sonoff device, covering all entities attached to that physical device.
