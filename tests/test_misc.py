@@ -585,6 +585,60 @@ def test_verify_sensor_telemetry_pulls_mdns_until_payload_arrives(monkeypatch):
     assert device.get("localsensornodata") in (None, 0)
 
 
+def test_await_sensor_telemetry_releases_pending_after_failure():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    poll_ts = time.time()
+    device = XDevice(
+        deviceid=DEVICEID,
+        local=True,
+        update_interval=30,
+        localsensorpending=poll_ts,
+    )
+    registry.devices = {DEVICEID: device}
+
+    async def pull_mdns(dev, **kwargs):
+        raise RuntimeError("mDNS pull failed")
+
+    registry._pull_mdns_bounded = pull_mdns
+    before = time.time()
+    with pytest.raises(RuntimeError, match="mDNS pull failed"):
+        loop.run_until_complete(registry._await_sensor_telemetry(device, poll_ts))
+    loop.close()
+
+    assert "localsensorpending" not in device
+    assert before < device["localsensorping"] <= before + 5.1
+
+
+def test_await_sensor_telemetry_does_not_release_newer_pending_poll():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    poll_ts = time.time()
+    newer_poll_ts = poll_ts + 1
+    device = XDevice(
+        deviceid=DEVICEID,
+        local=True,
+        localsensorpending=poll_ts,
+    )
+    registry.devices = {DEVICEID: device}
+
+    async def pull_mdns(dev, **kwargs):
+        dev["localsensorpending"] = newer_poll_ts
+        raise RuntimeError("older task failed")
+
+    registry._pull_mdns_bounded = pull_mdns
+    with pytest.raises(RuntimeError, match="older task failed"):
+        loop.run_until_complete(registry._await_sensor_telemetry(device, poll_ts))
+    loop.close()
+
+    assert device["localsensorpending"] == newer_poll_ts
+    assert "localsensorping" not in device
+
+
 def test_send_local_records_sensor_command_failure():
     loop = asyncio.new_event_loop()
     # noinspection PyTypeChecker

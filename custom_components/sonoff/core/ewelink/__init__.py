@@ -497,14 +497,24 @@ class XRegistry(XRegistryBase):
             )
 
     async def _await_sensor_telemetry(self, device: XDevice, poll_ts: float):
-        if device["deviceid"] not in self.devices:
-            return
-        await self._pull_mdns_bounded(device)
-        if (device.get("localtelemetry_at") or 0) >= poll_ts:
-            device.pop("localsensorpending", None)
-            self.dispatcher_send(device["deviceid"], None)
-            return
-        await self._verify_sensor_telemetry(device, poll_ts)
+        try:
+            if device["deviceid"] not in self.devices:
+                return
+            await self._pull_mdns_bounded(device)
+            if (device.get("localtelemetry_at") or 0) >= poll_ts:
+                device.pop("localsensorpending", None)
+                self.dispatcher_send(device["deviceid"], None)
+                return
+            await self._verify_sensor_telemetry(device, poll_ts)
+        finally:
+            # A failed recovery task must not suppress every future sensor poll.
+            # Only the task that owns this marker may release it.
+            if device.get("localsensorpending") == poll_ts:
+                device.pop("localsensorpending", None)
+                if device["deviceid"] in self.devices:
+                    interval = self._sensor_update_interval(device)
+                    device["localsensorping"] = time.time() + min(interval, 5)
+                    self.dispatcher_send(device["deviceid"], None)
 
     async def _verify_sensor_telemetry(
         self,

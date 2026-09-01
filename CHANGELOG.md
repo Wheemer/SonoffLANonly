@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.12.2.7
+
+- Always release the realtime telemetry poll latch when an mDNS recovery task fails or is cancelled, preventing one background error from permanently stopping later sensor updates.
+- Retry a failed telemetry recovery within five seconds while ensuring an older task cannot clear a newer poll's latch.
+
 ## 3.12.2.6
 
 - Keep realtime LAN sensors available while their device remains locally reachable instead of treating missing callback payloads as device failure.
