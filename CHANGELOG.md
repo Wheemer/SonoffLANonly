@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.12.2.15
+
+- Run historical energy polling as Home Assistant background work so its persistent loops never delay startup completion.
+- Add debug diagnostics for successful historical imports and retryable unavailable payloads.
+
 ## 3.12.2.14
 
 - Import proven 100-day device-local energy history into Home Assistant as timestamped external statistics.

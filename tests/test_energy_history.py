@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from custom_components.sonoff import energy_history
@@ -6,6 +7,27 @@ from custom_components.sonoff.energy_history import build_daily_statistics
 from custom_components.sonoff.sensor import XCloudEnergy
 
 from . import DEVICEID, init
+
+
+def test_manager_uses_background_tasks():
+    calls = []
+
+    class Hass:
+        def async_create_background_task(self, coro, name):
+            coro.close()
+            calls.append(name)
+            return SimpleNamespace(cancel=lambda: None)
+
+    manager = energy_history.XEnergyHistoryManager(Hass())
+    manager.add_entities(
+        [
+            SimpleNamespace(
+                param="hundredDaysKwhData", device={"deviceid": DEVICEID}
+            )
+        ]
+    )
+
+    assert calls == [f"sonoff energy history {DEVICEID}"]
 
 
 def test_build_daily_statistics_orders_oldest_first():

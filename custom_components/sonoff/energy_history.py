@@ -64,7 +64,7 @@ class XEnergyHistoryManager:
             deviceid = entity.device["deviceid"]
             if deviceid in self._tasks:
                 continue
-            self._tasks[deviceid] = self.hass.async_create_task(
+            self._tasks[deviceid] = self.hass.async_create_background_task(
                 self._run(entity), f"{DOMAIN} energy history {deviceid}"
             )
 
@@ -87,8 +87,19 @@ class XEnergyHistoryManager:
                     if history and len(history) == HISTORY_DAYS:
                         days = HISTORY_DAYS if first_import else HISTORY_OVERLAP_DAYS
                         await self._async_import(entity, history[:days])
+                        _LOGGER.debug(
+                            "Imported %s days of historical energy for %s",
+                            days,
+                            entity.device.get("deviceid"),
+                        )
                         first_import = False
                         success = True
+
+                if not success:
+                    _LOGGER.debug(
+                        "Historical energy unavailable for %s; retrying",
+                        entity.device.get("deviceid"),
+                    )
 
                 delay = entity.report_dt if success else HISTORY_RETRY_SECONDS
                 await asyncio.sleep(delay)
