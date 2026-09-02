@@ -189,13 +189,13 @@ def test_plural_inching_entities_preserve_all_channels_and_unknown_fields():
         if isinstance(entity, XInchingDuration) and entity.channel == 0
     )
     assert mode.current_option == "Disabled"
-    assert mode.options == ["Disabled", "On then off", "Off then on"]
+    assert mode.options == ["Disabled", "Auto-off", "Auto-on"]
     assert mode.entity_category.value == "config"
     assert duration.native_value == 0.5
     assert duration.native_max_value == 3600
     assert duration.entity_category.value == "config"
     async def update_all():
-        await mode.async_select_option("On then off")
+        await mode.async_select_option("Auto-off")
         await duration.async_set_native_value(2.1)
 
     asyncio.run(update_all())
@@ -248,6 +248,40 @@ def test_plural_inching_entities_only_expose_reported_fields():
     mode = next(item for item in entities if isinstance(item, XInchingMode))
     assert mode.options == ["Disabled", "Enabled"]
     assert sum(isinstance(item, XInchingDuration) for item in entities) == 1
+
+
+def test_inching_mode_maps_auto_labels_to_protocol_values():
+    registry, entities = init(
+        {
+            "extra": {"uiid": 182},
+            "params": {
+                "pulses": [
+                    {"outlet": 0, "pulse": "on", "switch": "off", "width": 500}
+                ]
+            },
+        }
+    )
+    mode = next(item for item in entities if isinstance(item, XInchingMode))
+    calls = []
+
+    async def set_inching(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    registry.set_inching = set_inching
+
+    async def select_modes():
+        await mode.async_select_option("Disabled")
+        await mode.async_select_option("Auto-off")
+        await mode.async_select_option("Auto-on")
+
+    asyncio.run(select_modes())
+
+    assert mode.current_option == "Auto-on"
+    assert calls == [
+        ((mode.device, 0), {"pulse": "off"}),
+        ((mode.device, 0), {"pulse": "on", "switch": "on"}),
+        ((mode.device, 0), {"pulse": "on", "switch": "off"}),
+    ]
 
 
 def test_inching_mode_removes_superseded_registry_entities():

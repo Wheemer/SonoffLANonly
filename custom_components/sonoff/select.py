@@ -112,7 +112,7 @@ class XInchingMode(XEntity, SelectEntity):
     channel: int = 0
 
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_options = ["Disabled", "On then off", "Off then on"]
+    _attr_options = ["Disabled", "Auto-off", "Auto-on"]
 
     def __init__(self, ewelink: XRegistry, device: dict):
         super().__init__(ewelink, device)
@@ -139,9 +139,9 @@ class XInchingMode(XEntity, SelectEntity):
                 elif "switch" not in item:
                     self._attr_current_option = "Enabled"
                 elif item["switch"] == "on":
-                    self._attr_current_option = "On then off"
+                    self._attr_current_option = "Auto-off"
                 else:
-                    self._attr_current_option = "Off then on"
+                    self._attr_current_option = "Auto-on"
                 return
 
     async def async_select_option(self, option: str):
@@ -149,9 +149,9 @@ class XInchingMode(XEntity, SelectEntity):
             changes = {"pulse": "off"}
         elif option == "Enabled":
             changes = {"pulse": "on"}
-        elif option == "On then off":
+        elif option == "Auto-off":
             changes = {"pulse": "on", "switch": "on"}
-        elif option == "Off then on":
+        elif option == "Auto-on":
             changes = {"pulse": "on", "switch": "off"}
         else:
             raise ValueError(f"Unsupported inching mode: {option}")

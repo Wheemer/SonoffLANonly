@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.12.2.10
+
+- Rename the inching modes to the concise, behavior-focused **Disabled**, **Auto-off**, and **Auto-on** labels.
+
 ## 3.12.2.9
 
 - Replace the separate channel-aware inching switch and action entities with one **Inching mode** dropdown: **Disabled**, **On then off**, or **Off then on**.

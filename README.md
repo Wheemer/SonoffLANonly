@@ -87,7 +87,7 @@ LAN callbacks reset the device timer. The integration sends a direct local refre
 
 ### Local Inching Controls
 
-Devices that report the channel-aware `pulses` configuration expose two controls per supported outlet in the device page's **Configuration** section. **Inching mode** offers **Disabled**, **On then off**, and **Off then on** in one dropdown. **Inching duration** uses 0.5-second increments from 0.5 seconds through one hour.
+Devices that report the channel-aware `pulses` configuration expose two controls per supported outlet in the device page's **Configuration** section. **Inching mode** offers **Disabled**, **Auto-off**, and **Auto-on** in one dropdown. **Inching duration** uses 0.5-second increments from 0.5 seconds through one hour.
 
 Each update sends the complete current `pulses` list through the local `/zeroconf/pulses` endpoint. Other outlets and unknown firmware fields are preserved. Home Assistant does not replace entity state from the HTTP acknowledgement alone; it waits for the resulting local state publication.
 
