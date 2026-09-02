@@ -84,6 +84,8 @@ class XRegistry(XRegistryBase):
         self.store = None
         self.store_task = None
         self.metadata_task: asyncio.Task | None = None
+        self.history_manager = None
+        self.history_disconnect = None
 
         self.cloud = XRegistryCloud(session)
         self.cloud.dispatcher_connect(SIGNAL_CONNECTED, self.cloud_connected)
@@ -182,6 +184,13 @@ class XRegistry(XRegistryBase):
         return self.cloud.online is not None or self.local.online
 
     async def stop(self, *args):
+        if self.history_manager:
+            await self.history_manager.async_stop()
+            self.history_manager = None
+        if self.history_disconnect:
+            self.history_disconnect()
+            self.history_disconnect = None
+
         if self.metadata_task and self.metadata_task is not asyncio.current_task():
             self.metadata_task.cancel()
             with suppress(asyncio.CancelledError):

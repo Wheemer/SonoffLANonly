@@ -251,7 +251,10 @@ class XCloudEnergy(XEntity, SensorEntity):
 
     def __init__(self, ewelink: XRegistry, device: dict):
         self._response_event = asyncio.Event()
+        self.daily_history: list[float] | None = None
         self.params = {self.param, "config"}
+        if self.param == "hundredDaysKwhData":
+            self._attr_should_poll = False
         reporting = device.get("reporting", {})
         report_key = self.uid or self.param
         self.report_dt, self.report_history = reporting.get(report_key) or (3600, 0)
@@ -284,6 +287,8 @@ class XCloudEnergy(XEntity, SensorEntity):
             return
 
         self._attr_native_value = history[0]
+        if self.param == "hundredDaysKwhData":
+            self.daily_history = history if len(history) == 100 else None
         self._response_event.set()
 
         if self.report_history:
@@ -312,6 +317,8 @@ class XCloudEnergy(XEntity, SensorEntity):
             return False
 
     async def async_update(self):
+        if self.param == "hundredDaysKwhData":
+            return
         ts = time.time()
         if ts > self.next_ts and self.can_update() and await self.get_update():
             self.next_ts = ts + self.report_dt

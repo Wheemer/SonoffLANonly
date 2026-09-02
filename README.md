@@ -115,6 +115,8 @@ Supported power devices use local callbacks for power, current, voltage, and ene
 
 Historical energy requests are also considered successful only after the requested energy payload arrives, either in the LAN response or through the subsequent local callback. An empty acknowledgement does not advance the entity's hourly history throttle.
 
+For devices that return the proven `hundredDaysKwhData` format, SonoffLANonly imports the device's 100-day daily history into Home Assistant Recorder as an external statistic named `sonoff:<device_id>_energy_consumption`. The initial import backfills every available day; hourly updates refresh the latest 30 days so finalized or corrected device totals replace earlier values. Dates use Home Assistant's local timezone, and the importer runs even when the optional historical energy entity is disabled. Select the external statistic directly when configuring the Energy Dashboard.
+
 Repeated connection failures mark a device unavailable. The integration continues local recovery attempts and clears the failure latch before notifying Home Assistant when the device answers again. This prevents a recovered switch from remaining unavailable because Home Assistant evaluated the old failure state during the recovery callback.
 
 ## Diagnostics

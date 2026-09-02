@@ -7,11 +7,12 @@
   "config_flow": true,
   "dependencies": [
     "http",
+    "recorder",
     "zeroconf"
   ],
   "documentation": "https://github.com/Wheemer/SonoffLANonly",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/Wheemer/SonoffLANonly/issues",
   "requirements": [],
-  "version": "3.12.2.13"
+  "version": "3.12.2.14"
 }

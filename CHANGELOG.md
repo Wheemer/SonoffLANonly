@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.12.2.14
+
+- Import proven 100-day device-local energy history into Home Assistant as timestamped external statistics.
+- Backfill all available daily records initially and refresh the most recent 30 days for corrections without depending on the historical energy entity being enabled.
+- Preserve local-midnight timestamps, cumulative sums, current energy entities, and the existing optional history attribute.
+- Cancel historical polling and import tasks during config-entry unload and reload.
+
 ## 3.12.2.13
 
 - Replace the redundant local/cloud connection text sensor with a proper diagnostic connectivity binary sensor while preserving LAN diagnostics as attributes.

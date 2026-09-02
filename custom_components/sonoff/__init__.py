@@ -44,6 +44,7 @@ from .core.ewelink import (
 from .core.ewelink.camera import XCameras
 from .core.ewelink.cloud import APP, AuthError
 from .core.xutils import create_clientsession
+from .energy_history import XEnergyHistoryManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -223,6 +224,15 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     registry.config_entry = config_entry
     registry.device_update_intervals = dict(
         config_entry.options.get(CONF_DEVICE_UPDATE_INTERVALS, {})
+    )
+    if registry.history_manager:
+        await registry.history_manager.async_stop()
+    if registry.history_disconnect:
+        registry.history_disconnect()
+    history_manager = XEnergyHistoryManager(hass)
+    registry.history_manager = history_manager
+    registry.history_disconnect = registry.dispatcher_connect(
+        SIGNAL_ADD_ENTITIES, history_manager.add_entities
     )
 
     data = config_entry.data
