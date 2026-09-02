@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.0
+
+- Start a clean, independent SonoffLANonly version line after the LAN-only fork reached a stable release boundary.
+- Replace the inherited four-part upstream-derived version number with standard semantic versioning.
+- No runtime behavior changes from 3.12.2.15.
+
 ## 3.12.2.15
 
 - Run historical energy polling as Home Assistant background work so its persistent loops never delay startup completion.
