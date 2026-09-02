@@ -112,7 +112,8 @@ class XInchingMode(XEntity, SelectEntity):
     channel: int = 0
 
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_options = ["Disabled", "Auto-off", "Auto-on"]
+    _attr_options = ["disabled", "auto_off", "auto_on"]
+    _attr_translation_key = "inching_mode"
 
     def __init__(self, ewelink: XRegistry, device: dict):
         super().__init__(ewelink, device)
@@ -129,30 +130,30 @@ class XInchingMode(XEntity, SelectEntity):
             {},
         )
         if "switch" not in item:
-            self._attr_options = ["Disabled", "Enabled"]
+            self._attr_options = ["disabled", "enabled"]
 
     def set_state(self, params: dict):
         for item in params.get("pulses", []):
             if item.get("outlet") == self.channel:
                 if item.get("pulse") != "on":
-                    self._attr_current_option = "Disabled"
+                    self._attr_current_option = "disabled"
                 elif "switch" not in item:
-                    self._attr_current_option = "Enabled"
+                    self._attr_current_option = "enabled"
                 elif item["switch"] == "on":
-                    self._attr_current_option = "Auto-off"
+                    self._attr_current_option = "auto_on"
                 else:
-                    self._attr_current_option = "Auto-on"
+                    self._attr_current_option = "auto_off"
                 return
 
     async def async_select_option(self, option: str):
-        if option == "Disabled":
+        if option == "disabled":
             changes = {"pulse": "off"}
-        elif option == "Enabled":
+        elif option == "enabled":
             changes = {"pulse": "on"}
-        elif option == "Auto-off":
-            changes = {"pulse": "on", "switch": "on"}
-        elif option == "Auto-on":
+        elif option == "auto_off":
             changes = {"pulse": "on", "switch": "off"}
+        elif option == "auto_on":
+            changes = {"pulse": "on", "switch": "on"}
         else:
             raise ValueError(f"Unsupported inching mode: {option}")
         await self.ewelink.set_inching(self.device, self.channel, **changes)

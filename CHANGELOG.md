@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.12.2.11
+
+- Correct the inching action labels: protocol `switch: on` is **Auto-on**, and `switch: off` is **Auto-off**.
+- Keep protocol option values separate from their translated user-facing labels.
+
 ## 3.12.2.10
 
 - Rename the inching modes to the concise, behavior-focused **Disabled**, **Auto-off**, and **Auto-on** labels.

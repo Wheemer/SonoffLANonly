@@ -188,14 +188,15 @@ def test_plural_inching_entities_preserve_all_channels_and_unknown_fields():
         for entity in entities
         if isinstance(entity, XInchingDuration) and entity.channel == 0
     )
-    assert mode.current_option == "Disabled"
-    assert mode.options == ["Disabled", "Auto-off", "Auto-on"]
+    assert mode.current_option == "disabled"
+    assert mode.options == ["disabled", "auto_off", "auto_on"]
+    assert mode.translation_key == "inching_mode"
     assert mode.entity_category.value == "config"
     assert duration.native_value == 0.5
     assert duration.native_max_value == 3600
     assert duration.entity_category.value == "config"
     async def update_all():
-        await mode.async_select_option("Auto-off")
+        await mode.async_select_option("auto_off")
         await duration.async_set_native_value(2.1)
 
     asyncio.run(update_all())
@@ -207,7 +208,7 @@ def test_plural_inching_entities_preserve_all_channels_and_unknown_fields():
             {
                 "outlet": 0,
                 "pulse": "on",
-                "switch": "on",
+                "switch": "off",
                 "width": 2000,
                 "futureField": 7,
             },
@@ -246,7 +247,7 @@ def test_plural_inching_entities_only_expose_reported_fields():
     )
 
     mode = next(item for item in entities if isinstance(item, XInchingMode))
-    assert mode.options == ["Disabled", "Enabled"]
+    assert mode.options == ["disabled", "enabled"]
     assert sum(isinstance(item, XInchingDuration) for item in entities) == 1
 
 
@@ -262,6 +263,7 @@ def test_inching_mode_maps_auto_labels_to_protocol_values():
         }
     )
     mode = next(item for item in entities if isinstance(item, XInchingMode))
+    assert mode.current_option == "auto_off"
     calls = []
 
     async def set_inching(*args, **kwargs):
@@ -270,18 +272,35 @@ def test_inching_mode_maps_auto_labels_to_protocol_values():
     registry.set_inching = set_inching
 
     async def select_modes():
-        await mode.async_select_option("Disabled")
-        await mode.async_select_option("Auto-off")
-        await mode.async_select_option("Auto-on")
+        await mode.async_select_option("disabled")
+        await mode.async_select_option("auto_off")
+        await mode.async_select_option("auto_on")
 
     asyncio.run(select_modes())
 
-    assert mode.current_option == "Auto-on"
+    # The selector remains on the last device-reported value until its LAN callback.
+    assert mode.current_option == "auto_off"
     assert calls == [
         ((mode.device, 0), {"pulse": "off"}),
-        ((mode.device, 0), {"pulse": "on", "switch": "on"}),
         ((mode.device, 0), {"pulse": "on", "switch": "off"}),
+        ((mode.device, 0), {"pulse": "on", "switch": "on"}),
     ]
+
+
+def test_inching_switch_on_reports_auto_on():
+    _, entities = init(
+        {
+            "extra": {"uiid": 182},
+            "params": {
+                "pulses": [
+                    {"outlet": 0, "pulse": "on", "switch": "on", "width": 500}
+                ]
+            },
+        }
+    )
+
+    mode = next(item for item in entities if isinstance(item, XInchingMode))
+    assert mode.current_option == "auto_on"
 
 
 def test_inching_mode_removes_superseded_registry_entities():
