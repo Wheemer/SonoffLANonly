@@ -248,9 +248,10 @@ class XCloudEnergy(XEntity, SensorEntity):
     def __init__(self, ewelink: XRegistry, device: dict):
         self._response_event = asyncio.Event()
         self.params = {self.param, "config"}
-        XEntity.__init__(self, ewelink, device)
         reporting = device.get("reporting", {})
-        self.report_dt, self.report_history = reporting.get(self.uid) or (3600, 0)
+        report_key = self.uid or self.param
+        self.report_dt, self.report_history = reporting.get(report_key) or (3600, 0)
+        XEntity.__init__(self, ewelink, device)
 
     @staticmethod
     def decode_energy(value: str) -> Optional[list]:

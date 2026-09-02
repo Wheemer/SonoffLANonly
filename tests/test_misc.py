@@ -158,6 +158,24 @@ def test_cloud_energy_uses_normal_send_without_cloud_query():
     )
 
 
+def test_cloud_energy_initializes_reporting_before_cached_state():
+    registry = XRegistry(None)
+    device = XDevice(
+        deviceid=DEVICEID,
+        name="Device1",
+        reporting={"hundredDaysKwhData": (120, 2)},
+        params={"config": {"hundredDaysKwhData": "000009000108"}},
+    )
+    entity_cls = spec(XCloudEnergy, param="hundredDaysKwhData")
+
+    entity = entity_cls(registry, device)
+
+    assert entity.report_dt == 120
+    assert entity.report_history == 2
+    assert entity.native_value == 0.09
+    assert entity.extra_state_attributes == {"history": [0.09, 0.18]}
+
+
 def test_cloud_energy_does_not_throttle_after_ack_without_payload():
     loop = asyncio.new_event_loop()
     # noinspection PyTypeChecker

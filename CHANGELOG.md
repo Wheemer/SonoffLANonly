@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.12.2.12
+
+- Initialize energy reporting settings before applying cached LAN history, preventing S40 energy entities from raising `AttributeError` during startup.
+
 ## 3.12.2.11
 
 - Correct the inching action labels: protocol `switch: on` is **Auto-on**, and `switch: off` is **Auto-off**.
