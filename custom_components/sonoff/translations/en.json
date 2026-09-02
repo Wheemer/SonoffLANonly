@@ -23,7 +23,7 @@
       "init": {
         "data": {
           "homes": "Homes (leave blank for active home in mobile app)",
-          "debug": "Debug page (Integration > Menu > Known issues)"
+          "debug": "Debug page (link in notification and log)"
         }
       }
     }

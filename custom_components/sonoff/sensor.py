@@ -13,12 +13,14 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
+    LIGHT_LUX,
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfPower,
+    UnitOfPressure,
     UnitOfTemperature,
     UnitOfVolume,
 )
@@ -33,6 +35,7 @@ except ImportError:  # Home Assistant before the unit enums were introduced
         CONCENTRATION_MICROGRAMS_PER_CUBIC_METER as CONCENTRATION_UG_M3,
         CONCENTRATION_PARTS_PER_MILLION as CONCENTRATION_PPM,
     )
+
 from homeassistant.util import dt
 
 from homeassistant.core import callback
@@ -41,6 +44,9 @@ from homeassistant.helpers.event import async_track_time_interval
 from .core.const import DOMAIN
 from .core.entity import XEntity
 from .core.ewelink import LAN_ONLY, SIGNAL_ADD_ENTITIES, XRegistry
+
+CONCENTRATION_MICROGRAMS_PER_CUBIC_METER = CONCENTRATION_UG_M3
+CONCENTRATION_PARTS_PER_MILLION = CONCENTRATION_PPM
 
 PARALLEL_UPDATES = 0  # fix entity_platform parallel_updates Semaphore
 SCAN_INTERVAL = timedelta(seconds=15)
@@ -64,11 +70,13 @@ DEVICE_CLASSES = {
     "current": SensorDeviceClass.CURRENT,
     "current_supply": SensorDeviceClass.CURRENT,
     "humidity": SensorDeviceClass.HUMIDITY,
+    "illuminance": SensorDeviceClass.ILLUMINANCE,
     "outdoor_temp": SensorDeviceClass.TEMPERATURE,
     "power": SensorDeviceClass.POWER,
     "power_supply": SensorDeviceClass.POWER,
     "pm25": SensorDeviceClass.PM25,
     "pm10": SensorDeviceClass.PM10,
+    "pressure": SensorDeviceClass.PRESSURE,
     "remote_temperature": SensorDeviceClass.TEMPERATURE,
     "rssi": SensorDeviceClass.SIGNAL_STRENGTH,
     "temperature": SensorDeviceClass.TEMPERATURE,
@@ -83,11 +91,13 @@ UNITS = {
     "current": UnitOfElectricCurrent.AMPERE,
     "current_supply": UnitOfElectricCurrent.AMPERE,
     "humidity": PERCENTAGE,
+    "illuminance": LIGHT_LUX,
     "outdoor_temp": UnitOfTemperature.CELSIUS,
     "power": UnitOfPower.WATT,
     "power_supply": UnitOfPower.WATT,
     "pm25": CONCENTRATION_UG_M3,
     "pm10": CONCENTRATION_UG_M3,
+    "pressure": UnitOfPressure.HPA,
     "remote_temperature": UnitOfTemperature.CELSIUS,
     "rssi": SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     "temperature": UnitOfTemperature.CELSIUS,

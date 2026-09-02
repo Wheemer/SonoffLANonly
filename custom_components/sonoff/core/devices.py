@@ -698,11 +698,12 @@ DEVICES = {
     7009: [XZigbeeLight],
     # ZBMicro, https://github.com/AlexxIT/SonoffLAN/issues/1525
     7010: [XSwitch, ZRSSI],
-    # https://github.com/AlexxIT/SonoffLAN/issues/1166
+    # SNZB-02D, https://github.com/AlexxIT/SonoffLAN/issues/1166
     7014: [
         spec(XSensor100, param="temperature"),
         spec(XSensor100, param="humidity"),
         Battery,
+        ZRSSI,
     ],
     # SNZB-06P
     7016: [XHumanSensor, XLightSensor, XSensitivity, ZRSSI],
@@ -766,7 +767,14 @@ DEVICES = {
         EnergyMonth,
     ],
     # SNZB-02WD, https://github.com/AlexxIT/SonoffLAN/issues/1612
-    7033: [XTempCorrection, XHumCorrection, Battery, ZRSSI],
+    7033: [
+        # Using raw values without correction
+        # https://github.com/AlexxIT/SonoffLAN/issues/1857
+        spec(XSensor, param="temperature"),
+        spec(XSensor, param="humidity"),
+        Battery,
+        ZRSSI,
+    ],
     # MINI-ZBRBS, https://github.com/AlexxIT/SonoffLAN/issues/1666
     7034: [XZBCover, LED, RSSI],
     # SNZB-02DR2
@@ -783,8 +791,22 @@ DEVICES = {
     7039: [XButtonKey, Battery, ZRSSI],
     # SWV-ZNE, https://github.com/AlexxIT/SonoffLAN/issues/1814
     7047: [spec(XBoolSwitch, param="switch_00", uid="switch"), Battery, ZRSSI],
+    # SNZB-06P24 https://github.com/AlexxIT/SonoffLAN/issues/1852
+    7051: [XHumanSensor, spec(XSensor, param="illumination", uid="illuminance")],
+    # SNZB-02B
+    7052: [
+        spec(XSensor100, param="temperature"),
+        spec(XSensor100, param="humidity"),
+        Battery,
+        ZRSSI,
+    ],
     # SNZB-03PR2 https://github.com/AlexxIT/SonoffLAN/issues/1824
-    7055: [XHumanSensor, spec(XSensor, param="illumination"), Battery, ZRSSI],
+    7055: [
+        XHumanSensor,
+        spec(XSensor, param="illumination", uid="illuminance"),
+        Battery,
+        ZRSSI,
+    ],
     # SNZB-09P (Indoor Siren)
     7056: [
         XAlarmButton,
@@ -795,6 +817,14 @@ DEVICES = {
         XAlarmSoundType,
         spec(XSensor, param="alarmType", uid="alarm_status"),
         XAlarmPower,
+        Battery,
+        ZRSSI,
+    ],
+    # SNZB-02M https://github.com/AlexxIT/SonoffLAN/issues/1866
+    7057: [
+        spec(XSensor100, param="temperature"),
+        spec(XSensor100, param="humidity"),
+        spec(XSensor100, param="pressure"),
         Battery,
         ZRSSI,
     ],
