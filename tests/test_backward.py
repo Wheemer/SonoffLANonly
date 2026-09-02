@@ -50,19 +50,9 @@ def test_2024_1_cached_properties():
     assert sensor.should_poll is False
 
 
-def test_2024_2_climate():
+def test_lan_only_th_does_not_expose_cloud_climate():
     _, entities = init({"extra": {"uiid": 15}})
-    climate: ClimateEntity = next(e for e in entities if isinstance(e, XClimateTH))
-    if (MAJOR_VERSION, MINOR_VERSION) >= (2024, 2):
-        assert climate.supported_features == (
-            ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-            | ClimateEntityFeature.TURN_ON
-            | ClimateEntityFeature.TURN_OFF
-        )
-    else:
-        assert (
-            climate.supported_features == ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-        )
+    assert not any(isinstance(e, ClimateEntity) for e in entities)
 
 
 def test_2024_8_fan():

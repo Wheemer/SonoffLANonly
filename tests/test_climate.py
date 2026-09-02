@@ -34,8 +34,9 @@ def test_th():
         }
     )
 
-    climate = next(e for e in entities if isinstance(e, XClimateTH))
-    assert climate
+    assert not any(isinstance(e, XClimateTH) for e in entities)
+    assert any(e.uid == "temperature" for e in entities)
+    assert any(e.uid == "humidity" for e in entities)
 
 
 def test_thr316d():

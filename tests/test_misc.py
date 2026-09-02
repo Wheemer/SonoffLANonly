@@ -114,7 +114,9 @@ def test_send_uses_cached_host_before_mdns_marks_device_local():
 
     registry.local.send = local_send
 
-    ok = loop.run_until_complete(registry.send(device, {"switch": "on"}))
+    ok = loop.run_until_complete(
+        registry.send(device, {"switch": "on"}, timeout_lan=7)
+    )
     loop.close()
 
     assert ok == "online"
@@ -122,6 +124,7 @@ def test_send_uses_cached_host_before_mdns_marks_device_local():
     assert calls[0][0] is device
     assert calls[0][1] == {"switch": "on"}
     assert calls[0][2] is None
+    assert calls[0][4] == 7
 
 
 def test_cloud_energy_uses_normal_send_without_cloud_query():
@@ -137,6 +140,9 @@ def test_cloud_energy_uses_normal_send_without_cloud_query():
 
     async def send(*args, **kwargs):
         registry.send_args = args, kwargs
+        asyncio.get_running_loop().call_soon(
+            entity.set_state, {"hundredDaysKwhData": "000009"}
+        )
         return "online"
 
     registry.send = send
@@ -150,6 +156,31 @@ def test_cloud_energy_uses_normal_send_without_cloud_query():
         (device, {"hundredDaysKwh": "get"}),
         {"query_cloud": False, "timeout_lan": 5},
     )
+
+
+def test_cloud_energy_does_not_throttle_after_ack_without_payload():
+    loop = asyncio.new_event_loop()
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    device = XDevice(deviceid=DEVICEID, name="Device1", params={})
+    entity_cls = spec(
+        XCloudEnergy,
+        param="hundredDaysKwhData",
+        get_params={"hundredDaysKwh": "get"},
+        response_timeout=0.001,
+    )
+
+    async def send(*args, **kwargs):
+        return "online"
+
+    registry.send = send
+    entity = entity_cls(registry, device)
+
+    ok = loop.run_until_complete(entity.get_update())
+    loop.close()
+
+    assert ok is False
+    assert entity.next_ts == 0
 
 
 def test_local_update_dispatches_plaintext_energy_data():
@@ -222,8 +253,10 @@ def test_local_sensor_refresh_uses_separate_retry_gate(monkeypatch):
 
     asyncio.run(registry.update_local(device, 40))
 
-    assert calls == [(device, "sledonline", {"sledOnline": "on"})]
-    assert device["localsensorping"] == 42
+    assert calls == [
+        (device, "uiActive", {"uiActive": 60, "NO_SAVE_DB": True})
+    ]
+    assert device["localuiactiveping"] == 90
 
 
 def test_send_local_records_sensor_ack_without_telemetry(monkeypatch):
@@ -425,7 +458,107 @@ def test_update_local_skips_getstate_for_s40_uiids(monkeypatch):
     registry.send_local = send_local
 
     asyncio.run(registry.update_local(device, now))
-    assert calls == [(device, "sledonline", {"sledOnline": "on"})]
+    assert calls == [
+        (device, "uiActive", {"uiActive": 60, "NO_SAVE_DB": True})
+    ]
+    assert device["localuiactiveping"] == now + 50
+
+
+def test_update_local_refreshes_ui_active_lease_every_50_seconds():
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    device = XDevice(
+        deviceid=DEVICEID,
+        extra={"uiid": 182},
+        local=True,
+        localping=0,
+        localtelemetry_at=100,
+        localuiactiveping=150,
+        update_interval=60,
+        params={"sledOnline": "on"},
+    )
+    calls = []
+
+    async def send_local(*args, **kwargs):
+        calls.append(args)
+
+    registry.send_local = send_local
+
+    asyncio.run(registry.update_local(device, 149))
+    assert calls == []
+    assert device["localping"] == 150
+
+    asyncio.run(registry.update_local(device, 150))
+    assert calls == [
+        (device, "uiActive", {"uiActive": 60, "NO_SAVE_DB": True})
+    ]
+    assert device["localuiactiveping"] == 200
+
+
+def test_ui_active_device_uses_update_interval_for_stale_mdns_refresh():
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    device = XDevice(
+        deviceid=DEVICEID,
+        extra={"uiid": 182},
+        local=True,
+        localping=9999,
+        localtelemetry_at=99,
+        localsensorping=0,
+        localuiactiveping=150,
+        update_interval=1,
+        params={"sledOnline": "on"},
+    )
+    pulls = []
+
+    async def pull_mdns(dev):
+        pulls.append(dev)
+        registry._note_local_telemetry(dev, 100)
+        return True
+
+    registry.devices = {DEVICEID: device}
+    registry._pull_mdns_bounded = pull_mdns
+
+    asyncio.run(registry.update_local(device, 100))
+
+    assert pulls == [device]
+    assert device["localsensorping"] == 101
+    assert device["localtelemetry_at"] == 100
+    assert "localsensorpending" not in device
+
+
+def test_ui_active_stale_refresh_does_not_renew_lease_early():
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    device = XDevice(
+        deviceid=DEVICEID,
+        extra={"uiid": 32},
+        local=True,
+        localping=9999,
+        localtelemetry_at=90,
+        localsensorping=0,
+        localuiactiveping=150,
+        update_interval=10,
+        params={"sledOnline": "on"},
+    )
+    sends = []
+
+    async def send_local(*args, **kwargs):
+        sends.append(args)
+
+    async def pull_mdns(dev):
+        return False
+
+    registry.devices = {DEVICEID: device}
+    registry.send_local = send_local
+    registry._pull_mdns_bounded = pull_mdns
+
+    asyncio.run(registry.update_local(device, 100))
+
+    assert sends == []
+    assert device["localuiactiveping"] == 150
+    assert device["localsensorping"] == 110
+    assert device["localsensornodata"] == 1
 
 
 def test_update_local_does_not_overlap_pending_telemetry_watchdog():
@@ -459,7 +592,7 @@ def test_update_local_accepts_false_sledonline_value():
     now = time.time()
     device = XDevice(
         deviceid=DEVICEID,
-        extra={"uiid": 182},
+        extra={"uiid": 181},
         local=True,
         localping=now + 60,
         localsensorping=0,
@@ -978,6 +1111,72 @@ def test_s40_plural_inching_ack_requires_matching_mdns_state():
     assert DEVICEID not in registry._inching_pending
 
 
+def test_plural_inching_rejects_unreported_outlet_and_fields():
+    loop = asyncio.new_event_loop()
+    registry: XRegistry = XRegistry(None)
+    device = XDevice(
+        deviceid=DEVICEID,
+        extra={"uiid": 182},
+        params={"pulses": [{"outlet": 0, "pulse": "off", "width": 500}]},
+    )
+
+    async def run():
+        with pytest.raises(ValueError, match="outlet 1 was not reported"):
+            await registry.set_inching(device, 1, pulse="on")
+        with pytest.raises(ValueError, match="did not report fields: switch"):
+            await registry.set_inching(device, 0, switch="on")
+        with pytest.raises(ValueError, match="500-3600000"):
+            await registry.set_inching(device, 0, width=501)
+
+    loop.run_until_complete(run())
+    loop.close()
+
+
+def test_plural_inching_confirms_only_changed_field():
+    loop = asyncio.new_event_loop()
+    registry: XRegistry = XRegistry(None)
+    registry.local.online = True
+    device = XDevice(
+        deviceid=DEVICEID,
+        extra={"uiid": 182},
+        host="192.0.2.88:8081",
+        local=True,
+        params={
+            "pulses": [
+                {
+                    "outlet": 0,
+                    "pulse": "off",
+                    "switch": "off",
+                    "width": 500,
+                    "futureField": 7,
+                }
+            ]
+        },
+    )
+
+    async def local_send(dev, params=None, command=None, sequence=None, timeout=5):
+        return "ack"
+
+    async def pull_mdns(dev, **kwargs):
+        registry.local_update(
+            {
+                "deviceid": DEVICEID,
+                "params": {"pulses": [{"outlet": 0, "pulse": "on"}]},
+            }
+        )
+        return True
+
+    registry.devices = {DEVICEID: device}
+    registry.local.send = local_send
+    registry.local.pull_mdns = pull_mdns
+
+    ok = loop.run_until_complete(registry.set_inching(device, 0, pulse="on"))
+    loop.close()
+
+    assert ok == "online"
+    assert DEVICEID not in registry._inching_pending
+
+
 def test_confirm_switch_ack_requires_matching_getstate():
     loop = asyncio.new_event_loop()
     # noinspection PyTypeChecker
@@ -1189,6 +1388,35 @@ def test_stop_cancels_tracked_telemetry_tasks(monkeypatch):
     loop.close()
 
     assert not registry._local_telemetry_tasks
+
+
+def test_stop_cancels_per_device_poll_tasks(monkeypatch):
+    monkeypatch.setattr(asyncio, "create_task", _REAL_CREATE_TASK)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    device = XDevice(deviceid=DEVICEID, local=True)
+    registry.devices = {DEVICEID: device}
+    started = asyncio.Event()
+
+    async def slow_update(*args):
+        started.set()
+        await asyncio.sleep(3600)
+
+    registry.update_local = slow_update
+
+    async def run():
+        registry._schedule_update_local(device, time.time())
+        await asyncio.sleep(0)
+        assert started.is_set()
+        assert registry._local_poll_tasks
+        await registry.stop()
+
+    loop.run_until_complete(run())
+    loop.close()
+
+    assert not registry._local_poll_tasks
 
 
 def test_local_send_reraises_cancelled_error():

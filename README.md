@@ -33,6 +33,8 @@ This project is a LAN-only fork of [AlexxIT/SonoffLAN](https://github.com/AlexxI
 
 All runtime device commands, entity state, telemetry, and availability are local. Unsupported cloud modes are rejected instead of silently falling back.
 
+Entities whose implementation is known to require cloud commands are not exposed by this fork. Their locally reported measurements and relay controls remain available as separate entities where supported.
+
 An eWeLink login is still required for normal encrypted devices because the integration needs account inventory, model metadata, and each device's local encryption key. The login is used for metadata retrieval; it is not a cloud control path. DIY devices can be configured without an eWeLink password when their metadata and key are supplied locally.
 
 Home Assistant and the devices must share a network where mDNS and direct TCP traffic can reach the devices. VLANs require working multicast forwarding and routing between Home Assistant and the Sonoff devices.
@@ -81,7 +83,7 @@ Allowed values are `1` through `300` seconds. Restart Home Assistant after chang
 
 A value saved through the device's **Update interval** control overrides YAML for that device. This keeps existing YAML defaults intact while allowing normal adjustments from the Home Assistant UI.
 
-LAN callbacks reset the device timer. The integration sends a direct local refresh only after the device has been silent for the configured interval, so normal callbacks remain authoritative instead of being duplicated by blind polling. Power-monitoring devices use their firmware-specific telemetry refresh command. A shorter interval cannot make firmware publish data more quickly than it permits, and one-second intervals increase local network traffic.
+LAN callbacks reset the device timer. The integration sends a direct local refresh only after the device has been silent for the configured interval, so normal callbacks remain authoritative instead of being duplicated by blind polling. Power-monitoring devices use their firmware-specific recovery path. Devices that support `uiActive` keep a separate 60-second live-reporting lease, renewed every 50 seconds, while `update_interval` controls when a stale publication is actively requested over mDNS. A shorter interval cannot make firmware generate new measurements more quickly than it permits, and one-second intervals increase local network traffic.
 
 ### Local Inching Controls
 
@@ -107,7 +109,9 @@ sonoff:
 
 ## Telemetry And Recovery
 
-Supported power devices use local callbacks for power, current, voltage, and energy data. When telemetry becomes older than the configured interval, SonoffLANonly sends the device-specific LAN request and waits for the asynchronous mDNS response. An HTTP acknowledgement alone is not treated as fresh sensor data.
+Supported power devices use local callbacks for power, current, voltage, and energy data. When telemetry becomes older than the configured interval, SonoffLANonly uses the proven device-specific recovery path: a bounded active mDNS refresh for `uiActive` devices, or the appropriate LAN telemetry command for other supported firmware. An HTTP acknowledgement alone is not treated as fresh sensor data.
+
+Historical energy requests are also considered successful only after the requested energy payload arrives, either in the LAN response or through the subsequent local callback. An empty acknowledgement does not advance the entity's hourly history throttle.
 
 Repeated connection failures mark a device unavailable. The integration continues local recovery attempts and clears the failure latch before notifying Home Assistant when the device answers again. This prevents a recovered switch from remaining unavailable because Home Assistant evaluated the old failure state during the recovery callback.
 

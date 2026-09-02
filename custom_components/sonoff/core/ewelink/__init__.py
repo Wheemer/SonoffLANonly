@@ -18,6 +18,9 @@ LOCAL_RETRY_SECONDS = 15
 LOCAL_SENSOR_DEFAULT_SECONDS = 30
 LOCAL_POLL_LOOP_SECONDS = 1
 LOCAL_SENSOR_COMMANDS = frozenset({"sledonline", "statistics", "uiActive"})
+LOCAL_UI_ACTIVE_UIIDS = frozenset({32, 182})
+LOCAL_UI_ACTIVE_SECONDS = 60
+LOCAL_UI_ACTIVE_REFRESH_SECONDS = 50
 LOCAL_TELEMETRY_WAIT_SECONDS = 15
 LOCAL_TELEMETRY_MDNS_POLL_SECONDS = 2
 LOCAL_SWITCH_WAIT_SECONDS = 5
@@ -32,6 +35,7 @@ LOCAL_RUNTIME_DEVICE_KEYS = frozenset(
         "localfail",
         "localrecv",
         "localping",
+        "localuiactiveping",
         "localsensorping",
         "localsensorfail",
         "localsensorfail_at",
@@ -138,6 +142,7 @@ class XRegistry(XRegistryBase):
                 device.setdefault("local", False)
                 device.setdefault("localfail", 0)
                 device.setdefault("localping", 0)
+                device.setdefault("localuiactiveping", 0)
                 device.setdefault("localrecv", 0)
                 device.setdefault("localsensorping", 0)
 
@@ -242,6 +247,7 @@ class XRegistry(XRegistryBase):
         cmd_lan: str = None,
         query_cloud: bool = True,
         timeout_lan: int = LOCAL_COMMAND_TIMEOUT,
+        confirm_lan: dict = None,
     ) -> str | None:
         """Send command to device with LAN and Cloud. Usual params are same.
 
@@ -254,6 +260,7 @@ class XRegistry(XRegistryBase):
         :param query_cloud: optional query Cloud state after update state,
           ignored if params empty
         :param timeout_lan: optional custom LAN timeout
+        :param confirm_lan: optional subset of LAN state expected after an ACK
         """
         seq = await self.sequence()
 
@@ -269,11 +276,13 @@ class XRegistry(XRegistryBase):
         can_local = self.can_local(device)
         can_cloud = False if LAN_ONLY else self.can_cloud(device)
         query_cloud = False if LAN_ONLY else query_cloud
+        local_params = params_lan if params_lan is not None else params
+        expected = confirm_lan if confirm_lan is not None else local_params
 
         if can_local and can_cloud:
             # Personal fork policy: give known local devices room to answer.
             ok = await self.local.send(
-                main_device, params_lan or params, cmd_lan, seq, timeout_lan
+                main_device, local_params, cmd_lan, seq, timeout_lan
             )
 
             if ok == "online":
@@ -281,7 +290,7 @@ class XRegistry(XRegistryBase):
 
             if ok == "ack":
                 ok = await self._confirm_local_state(
-                    main_device, params_lan or params, timeout_lan
+                    main_device, expected, timeout_lan
                 )
                 if ok == "online":
                     return ok
@@ -300,11 +309,11 @@ class XRegistry(XRegistryBase):
                     await self.cloud.send(device, timeout=0)
 
         elif can_local:
-            ok = await self.local.send(main_device, params_lan or params, cmd_lan, seq)
+            ok = await self.local.send(
+                main_device, local_params, cmd_lan, seq, timeout_lan
+            )
             if ok == "ack":
-                ok = await self._confirm_local_state(
-                    main_device, params_lan or params, timeout_lan
-                )
+                ok = await self._confirm_local_state(main_device, expected, timeout_lan)
             if ok != "online":
                 main_device["localping"] = 0  # instant local ping request
 
@@ -472,6 +481,21 @@ class XRegistry(XRegistryBase):
 
     async def set_inching(self, device: XDevice, outlet: int, **changes):
         """Update one inching channel while preserving the complete pulses list."""
+        if not isinstance(outlet, int):
+            raise ValueError("Inching outlet must be an integer")
+        if not changes or not changes.keys() <= {"pulse", "switch", "width"}:
+            raise ValueError("Unsupported inching fields")
+        if "pulse" in changes and changes["pulse"] not in ("on", "off"):
+            raise ValueError("Inching pulse must be 'on' or 'off'")
+        if "switch" in changes and changes["switch"] not in ("on", "off"):
+            raise ValueError("Inching action must be 'on' or 'off'")
+        if "width" in changes and (
+            not isinstance(changes["width"], int)
+            or not 500 <= changes["width"] <= 3_600_000
+            or changes["width"] % 500
+        ):
+            raise ValueError("Inching width must be 500-3600000 ms in 500 ms steps")
+
         did = device["deviceid"]
         lock = self._inching_locks.setdefault(did, asyncio.Lock())
         async with lock:
@@ -482,22 +506,25 @@ class XRegistry(XRegistryBase):
 
             for item in pulses:
                 if item.get("outlet") == outlet:
+                    missing = changes.keys() - item.keys()
+                    if missing:
+                        raise ValueError(
+                            f"Inching outlet {outlet} did not report fields: "
+                            f"{', '.join(sorted(missing))}"
+                        )
                     item.update(changes)
                     break
             else:
-                item = {
-                    "outlet": outlet,
-                    "pulse": "off",
-                    "switch": "off",
-                    "width": 500,
-                }
-                item.update(changes)
-                pulses.append(item)
+                raise ValueError(f"Inching outlet {outlet} was not reported by device")
 
-            pulses.sort(key=lambda item: item.get("outlet", -1))
             self._inching_pending[did] = pulses
+            confirm = {"pulses": [{"outlet": outlet, **changes}]}
             result = await self.send(
-                device, {"pulses": pulses}, cmd_lan="pulses", timeout_lan=5
+                device,
+                {"pulses": pulses},
+                cmd_lan="pulses",
+                timeout_lan=5,
+                confirm_lan=confirm,
             )
             if result == "online":
                 self._inching_pending.pop(did, None)
@@ -575,6 +602,26 @@ class XRegistry(XRegistryBase):
                     interval = self._sensor_update_interval(device)
                     device["localsensorping"] = time.time() + min(interval, 5)
                     self.dispatcher_send(device["deviceid"], None)
+
+    async def _refresh_ui_active_telemetry(
+        self, device: XDevice, refresh_ts: float
+    ):
+        """Pull the current live-reporting publication once."""
+        device["localsensorpending"] = refresh_ts
+        try:
+            await self._pull_mdns_bounded(device)
+            if (device.get("localtelemetry_at") or 0) >= refresh_ts:
+                return
+
+            ts = time.time()
+            device["localsensornodata"] = device.get("localsensornodata", 0) + 1
+            device["localsensornodata_at"] = ts
+            device["localsensorfail_at"] = ts
+        finally:
+            if device.get("localsensorpending") == refresh_ts:
+                device.pop("localsensorpending", None)
+            if device["deviceid"] in self.devices:
+                self.dispatcher_send(device["deviceid"], None)
 
     async def _verify_sensor_telemetry(
         self,
@@ -848,6 +895,23 @@ class XRegistry(XRegistryBase):
             await asyncio.sleep(LOCAL_POLL_LOOP_SECONDS)
 
     async def update_local(self, device: XDevice, ts: float):
+        uiid = device["extra"]["uiid"]
+
+        # The current eWeLink app opens a 60-second live-reporting lease for
+        # devices that advertise UI_ACTIVE, refreshing it every 50 seconds.
+        if (
+            uiid in LOCAL_UI_ACTIVE_UIIDS
+            and not device.get("localsensorpending")
+            and ts >= device.get("localuiactiveping", 0)
+        ):
+            device["localuiactiveping"] = ts + LOCAL_UI_ACTIVE_REFRESH_SECONDS
+            await self.send_local(
+                device,
+                "uiActive",
+                {"uiActive": LOCAL_UI_ACTIVE_SECONDS, "NO_SAVE_DB": True},
+            )
+            return
+
         # 1. Poll realtime sensors when telemetry is stale (not on every LAN message).
         last_telemetry = device.get("localtelemetry_at") or 0
         interval = self._sensor_update_interval(device)
@@ -859,9 +923,13 @@ class XRegistry(XRegistryBase):
             and not device.get("localsensorpending")
             and ts >= device.get("localsensorping", 0)
         ):
-            uiid = device["extra"]["uiid"]
+            if uiid in LOCAL_UI_ACTIVE_UIIDS:
+                device["localsensorping"] = ts + interval
+                await self._refresh_ui_active_telemetry(device, ts)
+                return
+
             # TH10R2 (15) and THR316D/THR320D (181) shouldn't be here, but anyway
-            if uiid in (15, 32, 181, 182, 190, 262, 277):
+            if uiid in (15, 181, 190, 262, 277):
                 if "sledOnline" in device["params"]:
                     params = {"sledOnline": device["params"]["sledOnline"]}
                     gap = (
@@ -884,8 +952,11 @@ class XRegistry(XRegistryBase):
 
         # 2. Availability ping (S40-class plugs use sledonline instead of getState).
         if ts >= device.get("localping", 0):
-            uiid = device["extra"].get("uiid")
-            if uiid in LOCAL_NO_GETSTATE_UIIDS:
+            if uiid in LOCAL_UI_ACTIVE_UIIDS:
+                device["localping"] = device.get(
+                    "localuiactiveping", ts + LOCAL_UI_ACTIVE_REFRESH_SECONDS
+                )
+            elif uiid in LOCAL_NO_GETSTATE_UIIDS:
                 if "sledOnline" in device["params"]:
                     await self.send_local(
                         device,

@@ -29,7 +29,7 @@ from ..binary_sensor import (
     XZigbeeMotion,
 )
 from ..button import XAlarmButton, XButton, XT5Effect
-from ..climate import XClimateNS, XClimateTH, XThermostat, XThermostatTRVZB
+from ..climate import XThermostat, XThermostatTRVZB
 from ..core.entity import XEntity
 from ..cover import (
     XCover,
@@ -98,9 +98,9 @@ from ..sensor import (
 from ..switch import (
     XAlarmLight,
     XAlarmVoice,
+    XAutoControlSwitch,
     XBoolSwitch,
     XInchingSwitch,
-    XIntSwitch,
     XPanelScreen,
     XSwitch,
     XSwitchPOWR3,
@@ -248,7 +248,6 @@ DEVICES = {
     # Sonoff TH16
     15: [
         XSwitchTH,
-        XClimateTH,
         XTemperatureTH,
         XHumidityTH,
         LED,
@@ -416,7 +415,6 @@ DEVICES = {
         # Humidity. ALWAYS 50... NSPanel DOESN'T HAVE HUMIDITY SENSOR
         Switch1,
         Switch2,
-        XClimateNS,
         XTempCorrection,
         XOutdoorTempNS,
     ],
@@ -437,7 +435,6 @@ DEVICES = {
         Startup1,
         LED,
         RSSI,
-        spec(XIntSwitch, param="relaySeparation", uid="detach", enabled=False),
         spec(XButtonKey, uid="action"),
     ],
     # DW2-Wi-Fi-L, https://github.com/AlexxIT/SonoffLAN/issues/808
@@ -469,7 +466,12 @@ DEVICES = {
         XSwitchTH,
         XTemperatureTH,
         XHumidityTH,
-        spec(XIntSwitch, param="autoControlEnabled", uid="auto_mode", enabled=False),
+        spec(
+            XAutoControlSwitch,
+            param="autoControlEnabled",
+            uid="auto_mode",
+            enabled=False,
+        ),
         LED,
         RSSI,
     ],
@@ -817,10 +819,6 @@ def get_spec(device: dict) -> list:
         classes = [cls for cls in classes if XSwitches not in cls.__bases__]
         classes = [XCoverDualR3, XFanDualR3] + classes
 
-    # NSPanel Climate disable without switch configuration
-    if uiid == 133 and not device["params"].get("HMI_ATCDevice"):
-        classes = [cls for cls in classes if XClimateNS not in cls.__bases__]
-
     # SNZB-06P has no battery
     if uiid == 2026 and not device["params"].get("battery"):
         classes = [cls for cls in classes if cls != Battery]
@@ -834,30 +832,33 @@ def get_spec(device: dict) -> list:
 
     pulses = device["params"].get("pulses")
     if isinstance(pulses, list):
-        outlets = sorted(
-            {
-                item.get("outlet")
-                for item in pulses
-                if isinstance(item, dict) and isinstance(item.get("outlet"), int)
-            }
-        )
-        for outlet in outlets:
-            suffix = "" if len(outlets) == 1 else f"_{outlet + 1}"
-            classes.extend(
-                [
-                    spec(XInchingSwitch, channel=outlet, uid=f"inching{suffix}"),
+        by_outlet = {
+            item["outlet"]: item
+            for item in pulses
+            if isinstance(item, dict) and isinstance(item.get("outlet"), int)
+        }
+        for outlet, item in sorted(by_outlet.items()):
+            suffix = "" if len(by_outlet) == 1 else f"_{outlet + 1}"
+            if "pulse" in item:
+                classes.append(
+                    spec(XInchingSwitch, channel=outlet, uid=f"inching{suffix}")
+                )
+            if "width" in item:
+                classes.append(
                     spec(
                         XInchingDuration,
                         channel=outlet,
                         uid=f"inching_duration{suffix}",
-                    ),
+                    )
+                )
+            if "switch" in item:
+                classes.append(
                     spec(
                         XInchingAction,
                         channel=outlet,
                         uid=f"inching_action{suffix}",
-                    ),
-                ]
-            )
+                    )
+                )
 
     if "device_class" in device:
         classes = get_custom_spec(classes, device["device_class"])

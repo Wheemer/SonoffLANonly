@@ -237,6 +237,7 @@ class XHumidityTH(XSensor):
 class XCloudEnergy(XEntity, SensorEntity):
     get_params = None
     next_ts = 0
+    response_timeout = 5
 
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_entity_registry_enabled_default = False
@@ -245,6 +246,7 @@ class XCloudEnergy(XEntity, SensorEntity):
     _attr_should_poll = True
 
     def __init__(self, ewelink: XRegistry, device: dict):
+        self._response_event = asyncio.Event()
         self.params = {self.param, "config"}
         XEntity.__init__(self, ewelink, device)
         reporting = device.get("reporting", {})
@@ -277,6 +279,7 @@ class XCloudEnergy(XEntity, SensorEntity):
             return
 
         self._attr_native_value = history[0]
+        self._response_event.set()
 
         if self.report_history:
             self._attr_extra_state_attributes = {
@@ -288,10 +291,20 @@ class XCloudEnergy(XEntity, SensorEntity):
         return self.available
 
     async def get_update(self) -> bool:
+        self._response_event.clear()
         ok = await self.ewelink.send(
             self.device, self.get_params, query_cloud=False, timeout_lan=5
         )
-        return ok == "online"
+        if ok != "online":
+            return False
+        if self._response_event.is_set():
+            return True
+        try:
+            async with asyncio.timeout(self.response_timeout):
+                await self._response_event.wait()
+            return True
+        except TimeoutError:
+            return False
 
     async def async_update(self):
         ts = time.time()

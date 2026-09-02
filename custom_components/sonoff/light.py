@@ -1253,7 +1253,7 @@ class XMiniDim(XEntity, LightEntity):
 
     _attr_color_mode = ColorMode.BRIGHTNESS
     _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
-    _attr_supported_features = LightEntityFeature.TRANSITION
+    _attr_supported_features = LightEntityFeature(0)
 
     def set_state(self, params: dict):
         if "switch" in params:
@@ -1270,16 +1270,7 @@ class XMiniDim(XEntity, LightEntity):
         if brightness is not None:
             params["brightness"] = conv(brightness, 1, 255, 1, 100)
 
-        if transition is not None and self.ewelink.can_cloud(self.device):
-            # The MINI-DIM firmware supports transitionTime (in ms) for smooth
-            # hardware fading, but only through the cloud API — the local
-            # /zeroconf endpoint ignores it and times out. So we send the
-            # brightness via local first (fast), then fire the transition
-            # command through cloud in the background.
-            params["transitionTime"] = int(transition * 1000)
-            await self.ewelink.cloud.send(self.device, params)
-        else:
-            await self.ewelink.send(self.device, params)
+        await self.ewelink.send(self.device, params)
 
     async def async_turn_off(self, **kwargs) -> None:
         await self.ewelink.send(self.device, {"switch": "off"})

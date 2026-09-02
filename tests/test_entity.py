@@ -3,6 +3,7 @@ import time
 from typing import Union
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.components.light import (
     ColorMode,
@@ -27,7 +28,7 @@ from homeassistant.util import dt
 from custom_components.sonoff import CONFIG_SCHEMA, remote
 from custom_components.sonoff.binary_sensor import XBinarySensor, XHumanSensor, XRemoteSensor
 from custom_components.sonoff.button import XRemoteButton, XT5Effect
-from custom_components.sonoff.climate import XClimateNS, XThermostat
+from custom_components.sonoff.climate import XThermostat
 from custom_components.sonoff.core import devices
 from custom_components.sonoff.core.devices import Battery
 from custom_components.sonoff.core.entity import XEntity
@@ -47,6 +48,7 @@ from custom_components.sonoff.light import (
     XLightGroup,
     XLightL1,
     XLightL3,
+    XMiniDim,
     XT5EffectLight,
     XT5EffectSound,
     XT5EffectStatus,
@@ -238,6 +240,22 @@ def test_plural_inching_entities_preserve_all_channels_and_unknown_fields():
     assert sum(isinstance(item, XInchingSwitch) for item in second_entities) == 1
 
 
+def test_plural_inching_entities_only_expose_reported_fields():
+    _, entities = init(
+        {
+            "extra": {"uiid": 182},
+            "params": {
+                "sledOnline": "off",
+                "pulses": [{"outlet": 0, "pulse": "off", "width": 500}],
+            },
+        }
+    )
+
+    assert sum(isinstance(item, XInchingSwitch) for item in entities) == 1
+    assert sum(isinstance(item, XInchingDuration) for item in entities) == 1
+    assert not any(isinstance(item, XInchingAction) for item in entities)
+
+
 def test_entity_refresh_preserves_disabled_sledonline_value():
     registry, entities = init(
         {
@@ -354,6 +372,22 @@ def test_simple_switch():
     assert rssi.entity_registry_enabled_default is False
 
 
+def test_minidim_does_not_advertise_or_send_cloud_only_transition():
+    entities = get_entitites(
+        {
+            "extra": {"uiid": 277},
+            "params": {"switch": "off", "brightness": 50},
+        }
+    )
+    light: XMiniDim = next(e for e in entities if isinstance(e, XMiniDim))
+    registry: DummyRegistry = light.ewelink
+
+    assert light.supported_features == 0
+    result = registry.call(light.async_turn_on(brightness=255, transition=5))
+    assert result[1] == {"switch": "on", "brightness": 100}
+    assert "transitionTime" not in result[1]
+
+
 def test_power_entity_telemetry_polled_via_run_forever(monkeypatch):
     device = {
         "name": "Plug",
@@ -396,8 +430,10 @@ def test_power_entity_telemetry_polled_via_run_forever(monkeypatch):
     assert power.force_update is True
     assert current.force_update is True
     assert voltage.force_update is True
-    assert calls == [(power.device, "sledonline", {"sledOnline": "on"})]
-    assert power.device["localsensorping"] == 35
+    assert calls == [
+        (power.device, "uiActive", {"uiActive": 60, "NO_SAVE_DB": True})
+    ]
+    assert power.device["localuiactiveping"] == 70
 
 
 def test_available():
@@ -1704,45 +1740,7 @@ def test_ns_panel():
         "friendly_name": "Device1 Outdoor Temp",
     }
 
-    clim = next(e for e in entities if isinstance(e, XClimateNS))
-    state = clim.hass.states.get(clim.entity_id)
-    assert state.state == "off"
-    assert state.attributes == {
-        "hvac_modes": ["off", "cool", "auto"],
-        "min_temp": 16,
-        "max_temp": 31,
-        "target_temp_step": 0.5,
-        "current_temperature": 20,
-        "temperature": 26,
-        "friendly_name": "Device1",
-        "supported_features": 1,
-    }
-
-    clim.internal_update({"tempCorrection": -2})
-    state = clim.hass.states.get(clim.entity_id)
-    assert state.attributes["current_temperature"] == 18
-
-    clim.internal_update({"ATCEnable": 1})
-    state = clim.hass.states.get(clim.entity_id)
-    assert state.state == "cool"
-
-    clim.internal_update({"ATCMode": 0, "ATCExpect0": 22.22})
-    state = clim.hass.states.get(clim.entity_id)
-    assert state.attributes["temperature"] == 22.2
-
-    clim.internal_update({"ATCMode": 1})
-    state = clim.hass.states.get(clim.entity_id)
-    assert state.state == "auto"
-    # no target temperature
-    assert state.attributes == {
-        "hvac_modes": ["off", "cool", "auto"],
-        "min_temp": 16,
-        "max_temp": 31,
-        "target_temp_step": 0.5,
-        "current_temperature": 18,
-        "friendly_name": "Device1",
-        "supported_features": 0,
-    }
+    assert not any(isinstance(e, ClimateEntity) for e in entities)
 
 
 # noinspection DuplicatedCode
@@ -2131,8 +2129,7 @@ def test_minir4():
     switch: SwitchEntity = next(e for e in entities if e.uid == "1")
     assert switch.state == "on"
 
-    switch: SwitchEntity = next(e for e in entities if e.uid == "detach")
-    assert switch.state == "on"
+    assert not any(e.uid == "detach" for e in entities)
 
     action: XButtonKey = next(e for e in entities if e.uid == "action")
     assert action.state == ""
@@ -2678,12 +2675,24 @@ def test_thr316d_auto_mode():
 
     # noinspection PyTypeChecker
     registry: DummyRegistry = auto_mode.ewelink
+    calls = []
 
-    result = registry.call(auto_mode.async_turn_on())
-    assert result[1] == {"autoControlEnabled": 1}
+    async def send(*args, **kwargs):
+        calls.append((args, kwargs))
 
-    result = registry.call(auto_mode.async_turn_off())
-    assert result[1] == {"autoControlEnabled": 0}
+    registry.send = send
+
+    registry.call(auto_mode.async_turn_on())
+    assert calls[-1] == (
+        (auto_mode.device, {"autoControlEnabled": 1}),
+        {"cmd_lan": "autoControlEnabled"},
+    )
+
+    registry.call(auto_mode.async_turn_off())
+    assert calls[-1] == (
+        (auto_mode.device, {"autoControlEnabled": 0}),
+        {"cmd_lan": "autoControlEnabled"},
+    )
 
 
 def test_nspanel():

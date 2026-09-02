@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.12.2.8
+
+- Mirror eWeLink 5.28.1 realtime reporting for proven UIID 32 and 182 devices by opening a 60-second `uiActive` lease and renewing it every 50 seconds.
+- Keep each device's configured update interval as its independent telemetry freshness target, using a bounded active mDNS refresh when a `uiActive` publication becomes stale.
+- Stop using `sledOnline` writes as telemetry and availability probes for those `uiActive` devices.
+- Preserve complete channel-aware inching payloads, reject unreported outlets and fields, and confirm only the selected outlet and changed field after acknowledgement.
+- Require historical energy payloads to arrive inline or through a local callback before advancing the entity's hourly request throttle.
+- Route UIID 181 automatic-mode changes through the proven local `/zeroconf/autoControlEnabled` endpoint.
+- Remove configuration and climate entities whose implementations were known to require cloud commands under the enforced LAN-only policy.
+- Stop advertising cloud-only transition support for UIID 277 MINI-DIM while retaining immediate local brightness control.
+- Cancel per-device local refresh tasks cleanly during config-entry unload and reload.
+- Synchronize the fork with current `upstream/master` and expand protocol, interval, acknowledgement, and lifecycle regression coverage.
+
 ## 3.12.2.7
 
 - Always release the realtime telemetry poll latch when an mDNS recovery task fails or is cancelled, preventing one background error from permanently stopping later sensor updates.

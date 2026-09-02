@@ -38,7 +38,7 @@ class XNumber(XEntity, NumberEntity):
 
 
 class XUpdateInterval(XEntity, NumberEntity):
-    """Per-device stale LAN-state watchdog interval."""
+    """Per-device realtime telemetry freshness interval."""
 
     uid = "update_interval"
 
