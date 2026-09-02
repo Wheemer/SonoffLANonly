@@ -72,7 +72,7 @@ from ..number import (
     XTempCorrectionNumber,
 )
 from ..remote import XRemote
-from ..select import XInchingAction, XSelectStartup, XStartup
+from ..select import XInchingMode, XSelectStartup, XStartup
 from ..sensor import (
     XAlarmSoundType,
     XButtonKey,
@@ -100,7 +100,6 @@ from ..switch import (
     XAlarmVoice,
     XAutoControlSwitch,
     XBoolSwitch,
-    XInchingSwitch,
     XPanelScreen,
     XSwitch,
     XSwitchPOWR3,
@@ -841,7 +840,7 @@ def get_spec(device: dict) -> list:
             suffix = "" if len(by_outlet) == 1 else f"_{outlet + 1}"
             if "pulse" in item:
                 classes.append(
-                    spec(XInchingSwitch, channel=outlet, uid=f"inching{suffix}")
+                    spec(XInchingMode, channel=outlet, uid=f"inching{suffix}")
                 )
             if "width" in item:
                 classes.append(
@@ -851,15 +850,6 @@ def get_spec(device: dict) -> list:
                         uid=f"inching_duration{suffix}",
                     )
                 )
-            if "switch" in item:
-                classes.append(
-                    spec(
-                        XInchingAction,
-                        channel=outlet,
-                        uid=f"inching_action{suffix}",
-                    )
-                )
-
     if "device_class" in device:
         classes = get_custom_spec(classes, device["device_class"])
 

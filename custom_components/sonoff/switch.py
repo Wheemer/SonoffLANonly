@@ -1,5 +1,4 @@
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.helpers.entity import EntityCategory
 
 from .core.const import DOMAIN
 from .core.entity import XEntity
@@ -28,26 +27,6 @@ class XSwitch(XEntity, SwitchEntity):
 
     async def async_turn_off(self):
         await self.ewelink.send(self.device, {"switch": "off"})
-
-
-class XInchingSwitch(XEntity, SwitchEntity):
-    """Channel-aware inching toggle used by devices with ``pulses``."""
-
-    params = {"pulses"}
-    channel: int = 0
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def set_state(self, params: dict):
-        for item in params.get("pulses", []):
-            if item.get("outlet") == self.channel:
-                self._attr_is_on = item.get("pulse") == "on"
-                return
-
-    async def async_turn_on(self, *args, **kwargs):
-        await self.ewelink.set_inching(self.device, self.channel, pulse="on")
-
-    async def async_turn_off(self):
-        await self.ewelink.set_inching(self.device, self.channel, pulse="off")
 
 
 # noinspection PyAbstractClass

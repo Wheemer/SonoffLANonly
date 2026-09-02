@@ -16,7 +16,6 @@ ENTITY_CATEGORIES = {
     "pulse": EntityCategory.CONFIG,
     "pulseWidth": EntityCategory.CONFIG,
     "inching": EntityCategory.CONFIG,
-    "inching_action": EntityCategory.CONFIG,
     "inching_duration": EntityCategory.CONFIG,
     "rssi": EntityCategory.DIAGNOSTIC,
     "sensitivity": EntityCategory.CONFIG,
@@ -40,8 +39,7 @@ NAMES = {
     "pm10": "PM10",
     "pulse": "INCHING",
     "pulseWidth": "INCHING Duration",
-    "inching": "Inching",
-    "inching_action": "Inching action",
+    "inching": "Inching mode",
     "inching_duration": "Inching duration",
     "update_interval": "Update interval",
 }

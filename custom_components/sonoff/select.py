@@ -1,4 +1,5 @@
 from homeassistant.components.select import SelectEntity
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 
 from .core.const import DOMAIN
@@ -8,11 +9,35 @@ from .core.ewelink import SIGNAL_ADD_ENTITIES, XRegistry
 PARALLEL_UPDATES = 0  # fix entity_platform parallel_updates Semaphore
 
 
+def remove_legacy_inching_entities(registry, entity) -> None:
+    """Remove the superseded inching switch and action selector."""
+    unique_id = entity.unique_id
+    base = f"{entity.device['deviceid']}_inching"
+    suffix = unique_id.removeprefix(base)
+    legacy_ids = (
+        registry.async_get_entity_id("switch", DOMAIN, unique_id),
+        registry.async_get_entity_id("select", DOMAIN, f"{base}_action{suffix}"),
+    )
+    for entity_id in legacy_ids:
+        if entity_id:
+            registry.async_remove(entity_id)
+
+
 async def async_setup_entry(hass, config_entry, add_entities):
     ewelink: XRegistry = hass.data[DOMAIN][config_entry.entry_id]
+
+    def add_select_entities(entities):
+        entities = [e for e in entities if isinstance(e, SelectEntity)]
+        registry = er.async_get(hass)
+        for entity in entities:
+            if isinstance(entity, XInchingMode):
+                remove_legacy_inching_entities(registry, entity)
+
+        add_entities(entities)
+
     ewelink.dispatcher_connect(
         SIGNAL_ADD_ENTITIES,
-        lambda x: add_entities([e for e in x if isinstance(e, SelectEntity)]),
+        add_select_entities,
     )
 
 
@@ -80,23 +105,57 @@ class XSelectStartup(XEntity, SelectEntity):
         await self.ewelink.send(self.device, {"configure": configure_list})
 
 
-class XInchingAction(XEntity, SelectEntity):
-    """Relay action performed first when channel inching is enabled."""
+class XInchingMode(XEntity, SelectEntity):
+    """Channel-aware inching enable and action mode."""
 
     params = {"pulses"}
     channel: int = 0
 
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_options = ["on", "off"]
+    _attr_options = ["Disabled", "On then off", "Off then on"]
+
+    def __init__(self, ewelink: XRegistry, device: dict):
+        super().__init__(ewelink, device)
+
+        if self.uid != "inching":
+            self._attr_name = f"{device['name']} Inching mode {self.channel + 1}"
+
+        item = next(
+            (
+                item
+                for item in device.get("params", {}).get("pulses", [])
+                if item.get("outlet") == self.channel
+            ),
+            {},
+        )
+        if "switch" not in item:
+            self._attr_options = ["Disabled", "Enabled"]
 
     def set_state(self, params: dict):
         for item in params.get("pulses", []):
             if item.get("outlet") == self.channel:
-                self._attr_current_option = item.get("switch", "off")
+                if item.get("pulse") != "on":
+                    self._attr_current_option = "Disabled"
+                elif "switch" not in item:
+                    self._attr_current_option = "Enabled"
+                elif item["switch"] == "on":
+                    self._attr_current_option = "On then off"
+                else:
+                    self._attr_current_option = "Off then on"
                 return
 
     async def async_select_option(self, option: str):
-        await self.ewelink.set_inching(self.device, self.channel, switch=option)
+        if option == "Disabled":
+            changes = {"pulse": "off"}
+        elif option == "Enabled":
+            changes = {"pulse": "on"}
+        elif option == "On then off":
+            changes = {"pulse": "on", "switch": "on"}
+        elif option == "Off then on":
+            changes = {"pulse": "on", "switch": "off"}
+        else:
+            raise ValueError(f"Unsupported inching mode: {option}")
+        await self.ewelink.set_inching(self.device, self.channel, **changes)
 
 
 class XStartup(XEntity, SelectEntity):

@@ -60,7 +60,11 @@ from custom_components.sonoff.number import (
     XPulseWidth,
     XUpdateInterval,
 )
-from custom_components.sonoff.select import XInchingAction, XSelectStartup
+from custom_components.sonoff.select import (
+    XInchingMode,
+    XSelectStartup,
+    remove_legacy_inching_entities,
+)
 from custom_components.sonoff.sensor import (
     XButtonKey,
     XButtonLocalKey,
@@ -74,7 +78,6 @@ from custom_components.sonoff.sensor import (
 )
 from custom_components.sonoff.switch import (
     XBoolSwitch,
-    XInchingSwitch,
     XSwitch,
     XSwitchTH,
     XSwitches,
@@ -175,34 +178,25 @@ def test_plural_inching_entities_preserve_all_channels_and_unknown_fields():
         return "ack"
 
     registry.send = send
-    inching = next(
+    mode = next(
         entity
         for entity in entities
-        if isinstance(entity, XInchingSwitch) and entity.channel == 0
+        if isinstance(entity, XInchingMode) and entity.channel == 0
     )
     duration = next(
         entity
         for entity in entities
         if isinstance(entity, XInchingDuration) and entity.channel == 0
     )
-    action = next(
-        entity
-        for entity in entities
-        if isinstance(entity, XInchingAction) and entity.channel == 0
-    )
-
-    assert inching.is_on is False
-    assert inching.entity_category.value == "config"
+    assert mode.current_option == "Disabled"
+    assert mode.options == ["Disabled", "On then off", "Off then on"]
+    assert mode.entity_category.value == "config"
     assert duration.native_value == 0.5
     assert duration.native_max_value == 3600
     assert duration.entity_category.value == "config"
-    assert action.current_option == "off"
-    assert action.entity_category.value == "config"
-
     async def update_all():
-        await inching.async_turn_on()
+        await mode.async_select_option("On then off")
         await duration.async_set_native_value(2.1)
-        await action.async_select_option("on")
 
     asyncio.run(update_all())
 
@@ -237,7 +231,7 @@ def test_plural_inching_entities_preserve_all_channels_and_unknown_fields():
             },
         }
     )
-    assert sum(isinstance(item, XInchingSwitch) for item in second_entities) == 1
+    assert sum(isinstance(item, XInchingMode) for item in second_entities) == 1
 
 
 def test_plural_inching_entities_only_expose_reported_fields():
@@ -251,9 +245,48 @@ def test_plural_inching_entities_only_expose_reported_fields():
         }
     )
 
-    assert sum(isinstance(item, XInchingSwitch) for item in entities) == 1
+    mode = next(item for item in entities if isinstance(item, XInchingMode))
+    assert mode.options == ["Disabled", "Enabled"]
     assert sum(isinstance(item, XInchingDuration) for item in entities) == 1
-    assert not any(isinstance(item, XInchingAction) for item in entities)
+
+
+def test_inching_mode_removes_superseded_registry_entities():
+    _, entities = init(
+        {
+            "extra": {"uiid": 182},
+            "params": {
+                "pulses": [
+                    {"outlet": 0, "pulse": "off", "switch": "off", "width": 500},
+                    {"outlet": 1, "pulse": "off", "switch": "on", "width": 500},
+                ]
+            },
+        }
+    )
+    mode = next(
+        item
+        for item in entities
+        if isinstance(item, XInchingMode) and item.channel == 1
+    )
+    assert mode.name == "Device1 Inching mode 2"
+
+    class Registry:
+        removed = []
+
+        @staticmethod
+        def async_get_entity_id(domain, platform, unique_id):
+            assert platform == "sonoff"
+            return f"{domain}.{unique_id}"
+
+        @classmethod
+        def async_remove(cls, entity_id):
+            cls.removed.append(entity_id)
+
+    remove_legacy_inching_entities(Registry(), mode)
+
+    assert Registry.removed == [
+        f"switch.{DEVICEID}_inching_2",
+        f"select.{DEVICEID}_inching_action_2",
+    ]
 
 
 def test_entity_refresh_preserves_disabled_sledonline_value():

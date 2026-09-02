@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.12.2.9
+
+- Replace the separate channel-aware inching switch and action entities with one **Inching mode** dropdown: **Disabled**, **On then off**, or **Off then on**.
+- Remove obsolete inching switch and action registry entries automatically when the new mode selector loads.
+
 ## 3.12.2.8
 
 - Mirror eWeLink 5.28.1 realtime reporting for proven UIID 32 and 182 devices by opening a 60-second `uiActive` lease and renewing it every 50 seconds.
