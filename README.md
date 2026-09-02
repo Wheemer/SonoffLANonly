@@ -85,6 +85,8 @@ A value saved through the device's **Update interval** control overrides YAML fo
 
 LAN callbacks reset the device timer. The integration sends a direct local refresh only after the device has been silent for the configured interval, so normal callbacks remain authoritative instead of being duplicated by blind polling. Power-monitoring devices use their firmware-specific recovery path. Devices that support `uiActive` keep a separate 60-second live-reporting lease, renewed every 50 seconds, while `update_interval` controls when a stale publication is actively requested over mDNS. A shorter interval cannot make firmware generate new measurements more quickly than it permits, and one-second intervals increase local network traffic.
 
+Each device also provides a disabled-by-default diagnostic **Connection** binary sensor. It reports **Connected** only while the device has a usable LAN path and **Disconnected** after the local transport is lost or repeated direct connection attempts fail. LAN receive, telemetry, polling, and switch-confirmation diagnostics remain available as attributes.
+
 ### Local Inching Controls
 
 Devices that report the channel-aware `pulses` configuration expose two controls per supported outlet in the device page's **Configuration** section. **Inching mode** offers **Disabled**, **Auto-off** (turn back off after the delay), and **Auto-on** (turn back on after the delay) in one dropdown. **Inching duration** uses 0.5-second increments from 0.5 seconds through one hour.

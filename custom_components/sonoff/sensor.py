@@ -3,6 +3,10 @@ from datetime import timedelta
 import time
 from typing import Optional
 
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -603,21 +607,15 @@ class XCPUTemperature(XSensor):
         XSensor.set_state(self, value=value)
 
 
-class XConnection(XEntity, SensorEntity):
+class XConnection(XEntity, BinarySensorEntity):
     uid = "connection"
 
     _attr_available = True
-    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_entity_registry_enabled_default = False
 
     def internal_update(self, params: dict = None):
-        cloud = self.ewelink.can_cloud(self.device)
         local = self.ewelink.can_local(self.device)
-
-        if cloud:
-            value = "duplex" if local else "cloud"
-        else:
-            value = "local" if local else "none"
 
         recv = self.device.get("localrecv") or 0
         telemetry_at = self.device.get("localtelemetry_at") or 0
@@ -650,8 +648,8 @@ class XConnection(XEntity, SensorEntity):
         }
 
         change = False
-        if self._attr_native_value != value:
-            self._attr_native_value = value
+        if self._attr_is_on != local:
+            self._attr_is_on = local
             change = True
         if getattr(self, "_attr_extra_state_attributes", None) != attrs:
             self._attr_extra_state_attributes = attrs

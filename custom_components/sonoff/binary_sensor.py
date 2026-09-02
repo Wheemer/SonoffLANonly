@@ -7,6 +7,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.components.script import ATTR_LAST_TRIGGERED
 from homeassistant.const import STATE_ON
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt
 
@@ -17,11 +18,28 @@ from .core.ewelink import LAN_ONLY, SIGNAL_ADD_ENTITIES, XRegistry
 PARALLEL_UPDATES = 0  # fix entity_platform parallel_updates Semaphore
 
 
+def remove_legacy_connection_entity(registry, entity) -> None:
+    """Remove the superseded diagnostic connection text sensor."""
+    legacy_id = registry.async_get_entity_id("sensor", DOMAIN, entity.unique_id)
+    if legacy_id:
+        registry.async_remove(legacy_id)
+
+
 async def async_setup_entry(hass, config_entry, add_entities):
     ewelink: XRegistry = hass.data[DOMAIN][config_entry.entry_id]
+
+    def add_binary_sensor_entities(entities):
+        entities = [e for e in entities if isinstance(e, BinarySensorEntity)]
+        registry = er.async_get(hass)
+        for entity in entities:
+            if getattr(entity, "uid", None) == "connection":
+                remove_legacy_connection_entity(registry, entity)
+
+        add_entities(entities)
+
     ewelink.dispatcher_connect(
         SIGNAL_ADD_ENTITIES,
-        lambda x: add_entities([e for e in x if isinstance(e, BinarySensorEntity)]),
+        add_binary_sensor_entities,
     )
 
 

@@ -26,7 +26,12 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 from homeassistant.util import dt
 
 from custom_components.sonoff import CONFIG_SCHEMA, remote
-from custom_components.sonoff.binary_sensor import XBinarySensor, XHumanSensor, XRemoteSensor
+from custom_components.sonoff.binary_sensor import (
+    XBinarySensor,
+    XHumanSensor,
+    XRemoteSensor,
+    remove_legacy_connection_entity,
+)
 from custom_components.sonoff.button import XRemoteButton, XT5Effect
 from custom_components.sonoff.climate import XThermostat
 from custom_components.sonoff.core import devices
@@ -564,6 +569,9 @@ def test_connection_sensor_exposes_lan_polling_diagnostics():
         }
     )
     conn = next(e for e in entities if getattr(e, "uid", None) == "connection")
+    assert conn.device_class == BinarySensorDeviceClass.CONNECTIVITY
+    assert conn.is_on is True
+    assert conn.available is True
     conn.device.update(
         {
             "localrecv": time.time() - 12,
@@ -585,6 +593,42 @@ def test_connection_sensor_exposes_lan_polling_diagnostics():
     assert attrs["localtelemetry_at"] == 1100.0
     assert attrs["localtelemetry_age_s"] >= 12
     assert attrs["localrecv_age_s"] >= 12
+
+    conn.ewelink.local.online = False
+    conn.internal_update(None)
+    assert conn.is_on is False
+    assert conn.available is True
+
+
+def test_connection_sensor_removes_legacy_text_sensor():
+    entities = get_entitites(
+        {
+            "extra": {"uiid": 182},
+            "local": True,
+            "host": "192.168.1.2:8081",
+            "params": {"sledOnline": "on"},
+        }
+    )
+    conn = next(e for e in entities if getattr(e, "uid", None) == "connection")
+
+    class Registry:
+        removed = []
+
+        @staticmethod
+        def async_get_entity_id(domain, platform, unique_id):
+            assert (domain, platform, unique_id) == (
+                "sensor",
+                "sonoff",
+                conn.unique_id,
+            )
+            return "sensor.sonoff_connection"
+
+        @classmethod
+        def async_remove(cls, entity_id):
+            cls.removed.append(entity_id)
+
+    remove_legacy_connection_entity(Registry(), conn)
+    assert Registry.removed == ["sensor.sonoff_connection"]
 
 
 def test_power_sensor_stays_available_after_missing_telemetry_callbacks():

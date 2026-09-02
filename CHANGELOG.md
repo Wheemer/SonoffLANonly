@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.12.2.13
+
+- Replace the redundant local/cloud connection text sensor with a proper diagnostic connectivity binary sensor while preserving LAN diagnostics as attributes.
+- Remove superseded `sensor.*_connection` registry entries when the new binary sensor is added.
+
 ## 3.12.2.12
 
 - Initialize energy reporting settings before applying cached LAN history, preventing S40 energy entities from raising `AttributeError` during startup.
