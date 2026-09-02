@@ -1,5 +1,6 @@
-from homeassistant.components.number import NumberEntity, NumberMode
+from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
 from homeassistant.const import UnitOfTemperature, UnitOfTime
+from homeassistant.helpers.entity import EntityCategory
 
 from .core.const import CONF_DEVICE_UPDATE_INTERVALS, DOMAIN
 from .core.entity import XEntity
@@ -71,18 +72,20 @@ class XUpdateInterval(XEntity, NumberEntity):
 class XPulseWidth(XNumber):
     param = "pulseWidth"
 
+    _attr_device_class = getattr(NumberDeviceClass, "DURATION")  # backward support
     _attr_entity_registry_enabled_default = False
 
-    _attr_native_max_value = 36000
+    _attr_native_max_value = 3600
     _attr_native_min_value = 0.5
     _attr_native_step = 0.5
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
 
     def set_state(self, params: dict):
         self._attr_native_value = params["pulseWidth"] / 1000
 
     async def async_set_native_value(self, value: float) -> None:
         """
-        we need to send {'pulse': 'on'}  in order to also set the pilseWidth
+        we need to send {'pulse': 'on'} in order to also set pulseWidth
         else it'll reject the command
         also, since value is in (float) seconds, ensure we send milliseconds
         in 500 multiples (int(value / .5) * 500)
@@ -90,6 +93,31 @@ class XPulseWidth(XNumber):
         await self.ewelink.send(
             self.device, {"pulse": "on", "pulseWidth": int(value / 0.5) * 500}
         )
+
+
+class XInchingDuration(XEntity, NumberEntity):
+    """Channel-aware inching duration used by devices with ``pulses``."""
+
+    params = {"pulses"}
+    channel: int = 0
+
+    _attr_device_class = getattr(NumberDeviceClass, "DURATION")
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_native_min_value = 0.5
+    _attr_native_max_value = 3600
+    _attr_native_step = 0.5
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_mode = NumberMode.BOX
+
+    def set_state(self, params: dict):
+        for item in params.get("pulses", []):
+            if item.get("outlet") == self.channel and "width" in item:
+                self._attr_native_value = item["width"] / 1000
+                return
+
+    async def async_set_native_value(self, value: float) -> None:
+        width = round(value * 2) * 500
+        await self.ewelink.set_inching(self.device, self.channel, width=width)
 
 
 class XTempCorrectionNumber(XNumber):
@@ -110,3 +138,44 @@ class XSensitivity(XNumber):
     _attr_entity_registry_enabled_default = False
     _attr_native_max_value = 3
     _attr_native_min_value = 1
+
+
+# noinspection PyAbstractClass
+class XAlarmSettingNumber(XEntity, NumberEntity):
+    """Base class for SNZB-09P (uiid 7056) numbers nested inside `alarmSetting`.
+
+    See XAlarmSettingSwitch in switch.py for details - values reverse
+    engineered from device diagnostics, not official docs.
+    """
+
+    params = {"alarmSetting"}
+    field: str = None
+
+    def set_state(self, params: dict):
+        self._attr_native_value = params.get("alarmSetting", {}).get(self.field, 0)
+
+    async def async_set_native_value(self, value: float) -> None:
+        setting = dict(self.device["params"].get("alarmSetting", {}))
+        setting[self.field] = int(value)
+        await self.ewelink.send(self.device, {"alarmSetting": setting})
+
+
+class XAlarmDuration(XAlarmSettingNumber):
+    field = "duration"
+    uid = "alarm_duration"
+
+    _attr_native_min_value = 1
+    _attr_native_max_value = 180
+    _attr_native_step = 1
+    _attr_native_unit_of_measurement = "s"
+
+
+class XAlarmVolume(XAlarmSettingNumber):
+    """Guessed range 0-3 (app showed 'LOW') - verify on your own device."""
+
+    field = "volume"
+    uid = "alarm_volume"
+
+    _attr_native_min_value = 0
+    _attr_native_max_value = 3
+    _attr_native_step = 1

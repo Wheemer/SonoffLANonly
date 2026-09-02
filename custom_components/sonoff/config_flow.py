@@ -114,7 +114,7 @@ class OptionsFlowHandler(OptionsFlow):
                 cloud = XRegistryCloud(session)
                 await cloud.login(**self.config_entry.data, app=1)
                 homes = await cloud.get_homes()
-            except:
+            except Exception:
                 pass
 
         for home in self.config_entry.options.get("homes", []):

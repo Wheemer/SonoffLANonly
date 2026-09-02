@@ -9,7 +9,7 @@
 [![Latest release](https://img.shields.io/github/v/release/Wheemer/SonoffLANonly?style=for-the-badge&logo=github&logoColor=white&label=RELEASE&labelColor=555555&color=22C55E)](https://github.com/Wheemer/SonoffLANonly/releases/latest)
 [![License](https://img.shields.io/badge/LICENSE-MIT-64748B?style=for-the-badge&labelColor=555555)](LICENSE.md)
 
-[Install](#install) | [Configure](#configure) | [Polling](#per-device-update-interval) | [Diagnostics](#diagnostics) | [Devices](DEVICES.md)
+[Install](#install) | [Configure](#configure) | [Polling](#per-device-update-interval) | [Inching](#local-inching-controls) | [Diagnostics](#diagnostics) | [Devices](DEVICES.md)
 
 </div>
 
@@ -22,7 +22,8 @@ This project is a LAN-only fork of [AlexxIT/SonoffLAN](https://github.com/AlexxI
 - Controls supported switches, lights, sensors, covers, fans, climate devices, RF bridges, cameras, and related entities over LAN.
 - Treats local mDNS callbacks as the primary source of state and telemetry.
 - Prompts supported power-monitoring devices for fresh local telemetry when callbacks become stale.
-- Confirms ack-only switch commands through a fresh local mDNS state response.
+- Confirms ack-only stateful commands through a fresh local response.
+- Exposes local, per-channel inching enable, duration, and action controls when a device reports `pulses` support.
 - Retries unreachable devices and restores entity availability when a device returns.
 - Supports a `1` to `300` second device-specific telemetry watchdog interval, with a `30` second default.
 - Exposes optional connection diagnostics for local receive age, telemetry acknowledgements, missing telemetry, and connection failures.
@@ -81,6 +82,12 @@ Allowed values are `1` through `300` seconds. Restart Home Assistant after chang
 A value saved through the device's **Update interval** control overrides YAML for that device. This keeps existing YAML defaults intact while allowing normal adjustments from the Home Assistant UI.
 
 LAN callbacks reset the device timer. The integration sends a direct local refresh only after the device has been silent for the configured interval, so normal callbacks remain authoritative instead of being duplicated by blind polling. Power-monitoring devices use their firmware-specific telemetry refresh command. A shorter interval cannot make firmware publish data more quickly than it permits, and one-second intervals increase local network traffic.
+
+### Local Inching Controls
+
+Devices that report the channel-aware `pulses` configuration expose three controls per supported outlet in the device page's **Configuration** section: **Inching**, **Inching duration**, and **Inching action**. Duration uses 0.5-second increments from 0.5 seconds through one hour. Action selects whether the relay turns on or off first before returning to the opposite state after the duration.
+
+Each update sends the complete current `pulses` list through the local `/zeroconf/pulses` endpoint. Other outlets and unknown firmware fields are preserved. Home Assistant does not replace entity state from the HTTP acknowledgement alone; it waits for the resulting local state publication.
 
 ### Local Device Overrides
 

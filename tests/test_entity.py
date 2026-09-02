@@ -8,6 +8,7 @@ from homeassistant.components.light import (
     ColorMode,
     LightEntity,
 )
+from homeassistant.components.number import NumberDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.components.script import ATTR_LAST_TRIGGERED
@@ -17,6 +18,7 @@ from homeassistant.const import (
     MINOR_VERSION,
     STATE_ON,
     UnitOfEnergy,
+    UnitOfTime,
     UnitOfVolume,
 )
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
@@ -50,8 +52,13 @@ from custom_components.sonoff.light import (
     XT5EffectStatus,
     XT5Light,
 )
-from custom_components.sonoff.number import XNumber, XPulseWidth, XUpdateInterval
-from custom_components.sonoff.select import XSelectStartup
+from custom_components.sonoff.number import (
+    XInchingDuration,
+    XNumber,
+    XPulseWidth,
+    XUpdateInterval,
+)
+from custom_components.sonoff.select import XInchingAction, XSelectStartup
 from custom_components.sonoff.sensor import (
     XButtonKey,
     XButtonLocalKey,
@@ -65,6 +72,7 @@ from custom_components.sonoff.sensor import (
 )
 from custom_components.sonoff.switch import (
     XBoolSwitch,
+    XInchingSwitch,
     XSwitch,
     XSwitchTH,
     XSwitches,
@@ -130,6 +138,127 @@ def test_update_interval_number_is_visible_and_persisted_per_device():
                     "device_update_intervals": {DEVICEID: 1},
                 }
             },
+        )
+    ]
+
+
+def test_plural_inching_entities_preserve_all_channels_and_unknown_fields():
+    registry, entities = init(
+        {
+            "extra": {"uiid": 182},
+            "params": {
+                "sledOnline": "off",
+                "pulses": [
+                    {
+                        "outlet": 0,
+                        "pulse": "off",
+                        "switch": "off",
+                        "width": 500,
+                        "futureField": 7,
+                    },
+                    {
+                        "outlet": 1,
+                        "pulse": "on",
+                        "switch": "on",
+                        "width": 1500,
+                    },
+                ],
+            },
+        }
+    )
+    calls = []
+
+    async def send(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "ack"
+
+    registry.send = send
+    inching = next(
+        entity
+        for entity in entities
+        if isinstance(entity, XInchingSwitch) and entity.channel == 0
+    )
+    duration = next(
+        entity
+        for entity in entities
+        if isinstance(entity, XInchingDuration) and entity.channel == 0
+    )
+    action = next(
+        entity
+        for entity in entities
+        if isinstance(entity, XInchingAction) and entity.channel == 0
+    )
+
+    assert inching.is_on is False
+    assert inching.entity_category.value == "config"
+    assert duration.native_value == 0.5
+    assert duration.native_max_value == 3600
+    assert duration.entity_category.value == "config"
+    assert action.current_option == "off"
+    assert action.entity_category.value == "config"
+
+    async def update_all():
+        await inching.async_turn_on()
+        await duration.async_set_native_value(2.1)
+        await action.async_select_option("on")
+
+    asyncio.run(update_all())
+
+    payload = calls[-1][0][1]
+    assert calls[-1][1]["cmd_lan"] == "pulses"
+    assert payload == {
+        "pulses": [
+            {
+                "outlet": 0,
+                "pulse": "on",
+                "switch": "on",
+                "width": 2000,
+                "futureField": 7,
+            },
+            {
+                "outlet": 1,
+                "pulse": "on",
+                "switch": "on",
+                "width": 1500,
+            },
+        ]
+    }
+
+    _, second_entities = init(
+        {
+            "extra": {"uiid": 182},
+            "params": {
+                "sledOnline": "off",
+                "pulses": [
+                    {"outlet": 0, "pulse": "off", "switch": "off", "width": 500}
+                ],
+            },
+        }
+    )
+    assert sum(isinstance(item, XInchingSwitch) for item in second_entities) == 1
+
+
+def test_entity_refresh_preserves_disabled_sledonline_value():
+    registry, entities = init(
+        {
+            "extra": {"uiid": 182},
+            "params": {"sledOnline": "off", "switches": []},
+        }
+    )
+    entity = next(item for item in entities if isinstance(item, XSwitches))
+    calls = []
+
+    async def send(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    registry.send = send
+
+    asyncio.run(entity.async_update())
+
+    assert calls == [
+        (
+            (entity.device,),
+            {"params_lan": {"sledOnline": "off"}, "cmd_lan": "sledonline"},
         )
     ]
 
@@ -780,6 +909,16 @@ def test_sonoff_pow():
     assert power.state == 12.34
     power: XSensor = next(e for e in entities if e.uid == "current")
     assert power.state == 1.23
+
+    pulse: XToggle = next(e for e in entities if e.uid == "pulse")
+    assert pulse.is_on is False
+    assert pulse.entity_registry_enabled_default is False
+
+    pulse_width = next(e for e in entities if isinstance(e, XPulseWidth))
+    assert pulse_width.native_value == 0.5
+    assert pulse_width.device_class == getattr(NumberDeviceClass, "DURATION")
+    assert pulse_width.native_unit_of_measurement == UnitOfTime.SECONDS
+    assert pulse_width.entity_registry_enabled_default is False
 
 
 def test_rfbridge():
@@ -1867,7 +2006,7 @@ def test_backward_number():
     assert pulse.state == 3.0
     assert pulse.step == 0.5
     assert pulse.min_value == 0.5
-    assert pulse.max_value == 36000
+    assert pulse.max_value == 3600
 
     # noinspection PyTypeChecker
     reg: DummyRegistry = pulse.ewelink
@@ -2196,7 +2335,7 @@ def test_issue1235():
     power: XSensor = next(e for e in entities if e.uid == "power")
     assert power.device_class is None
     assert power.native_unit_of_measurement is None
-    assert power.native_value is "off"
+    assert power.native_value == "off"
     assert power.state_class is None
 
 

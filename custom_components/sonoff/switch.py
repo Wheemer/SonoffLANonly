@@ -1,4 +1,5 @@
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.helpers.entity import EntityCategory
 
 from .core.const import DOMAIN
 from .core.entity import XEntity
@@ -27,6 +28,26 @@ class XSwitch(XEntity, SwitchEntity):
 
     async def async_turn_off(self):
         await self.ewelink.send(self.device, {"switch": "off"})
+
+
+class XInchingSwitch(XEntity, SwitchEntity):
+    """Channel-aware inching toggle used by devices with ``pulses``."""
+
+    params = {"pulses"}
+    channel: int = 0
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def set_state(self, params: dict):
+        for item in params.get("pulses", []):
+            if item.get("outlet") == self.channel:
+                self._attr_is_on = item.get("pulse") == "on"
+                return
+
+    async def async_turn_on(self, *args, **kwargs):
+        await self.ewelink.set_inching(self.device, self.channel, pulse="on")
+
+    async def async_turn_off(self):
+        await self.ewelink.set_inching(self.device, self.channel, pulse="off")
 
 
 # noinspection PyAbstractClass
@@ -169,3 +190,45 @@ class XPanelScreen(XEntity, SwitchEntity):
 
     async def async_turn_off(self):
         await self.ewelink.send(self.device, {"openLED": False})
+
+
+# noinspection PyAbstractClass
+class XAlarmSettingSwitch(XEntity, SwitchEntity):
+    """Base class for SNZB-09P (uiid 7056) switches nested inside `alarmSetting`.
+
+    eWeLink sends/expects this device's config as a single nested dict:
+      "alarmSetting": {"duration": 10, "test": false, "alertSound": "alarm0",
+                        "voice": true, "volume": 0, "light": true}
+
+    Reverse engineered from device diagnostics - not from official docs, so
+    double-check behaviour on your own device.
+    """
+
+    params = {"alarmSetting"}
+    field: str = None
+
+    def set_state(self, params: dict):
+        self._attr_is_on = bool(params.get("alarmSetting", {}).get(self.field))
+
+    async def internal_send(self, value: bool):
+        setting = dict(self.device["params"].get("alarmSetting", {}))
+        setting[self.field] = value
+        await self.ewelink.send(self.device, {"alarmSetting": setting})
+
+    async def async_turn_on(self, *args, **kwargs):
+        await self.internal_send(True)
+
+    async def async_turn_off(self, *args, **kwargs):
+        await self.internal_send(False)
+
+
+class XAlarmLight(XAlarmSettingSwitch):
+    field = "light"
+    uid = "alarm_light"
+    _attr_icon = "mdi:alarm-light"
+
+
+class XAlarmVoice(XAlarmSettingSwitch):
+    field = "voice"
+    uid = "alarm_sound"
+    _attr_icon = "mdi:volume-high"

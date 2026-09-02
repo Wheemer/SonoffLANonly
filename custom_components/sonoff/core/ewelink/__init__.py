@@ -91,6 +91,8 @@ class XRegistry(XRegistryBase):
 
         self._local_poll_tasks: dict[str, asyncio.Task] = {}
         self._local_telemetry_tasks: set[asyncio.Task] = set()
+        self._inching_locks: dict[str, asyncio.Lock] = {}
+        self._inching_pending: dict[str, list[dict]] = {}
         self._mdns_semaphore = asyncio.Semaphore(LOCAL_MDNS_CONCURRENCY)
 
     def _track_telemetry_task(self, coro) -> asyncio.Task:
@@ -194,6 +196,8 @@ class XRegistry(XRegistryBase):
             with suppress(asyncio.CancelledError):
                 await task
         self._local_poll_tasks.clear()
+        self._inching_locks.clear()
+        self._inching_pending.clear()
 
         if self.task:
             self.task.cancel()
@@ -371,22 +375,39 @@ class XRegistry(XRegistryBase):
         return ok
 
     @staticmethod
-    def _local_state_matches(device: XDevice, expected: dict) -> bool:
-        params = device.get("params", {})
-        if "switch" in expected:
-            return params.get("switch") == expected["switch"]
-        if "switches" in expected:
-            current = {s["outlet"]: s["switch"] for s in params.get("switches", [])}
-            return all(
-                current.get(item["outlet"]) == item["switch"]
-                for item in expected["switches"]
+    def _value_matches(current, expected) -> bool:
+        if isinstance(expected, dict):
+            return isinstance(current, dict) and all(
+                key in current and XRegistry._value_matches(current[key], value)
+                for key, value in expected.items()
             )
-        return True
+        if isinstance(expected, list):
+            if not isinstance(current, list):
+                return False
+            if all(isinstance(item, dict) and "outlet" in item for item in expected):
+                current_by_outlet = {
+                    item.get("outlet"): item
+                    for item in current
+                    if isinstance(item, dict) and "outlet" in item
+                }
+                return all(
+                    item["outlet"] in current_by_outlet
+                    and XRegistry._value_matches(
+                        current_by_outlet[item["outlet"]], item
+                    )
+                    for item in expected
+                )
+            return current == expected
+        return current == expected
+
+    @staticmethod
+    def _local_state_matches(device: XDevice, expected: dict) -> bool:
+        return XRegistry._value_matches(device.get("params", {}), expected)
 
     def _switch_confirmed_since(
         self, device: XDevice, expected: dict, since: float
     ) -> bool:
-        if (device.get("localswitch_at") or 0) < since:
+        if (device.get("localrecv") or 0) < since:
             return False
         return self._local_state_matches(device, expected)
 
@@ -426,22 +447,61 @@ class XRegistry(XRegistryBase):
         expected: dict | None = None,
         timeout_lan: int = LOCAL_COMMAND_TIMEOUT,
     ) -> str | None:
-        if expected and ("switch" in expected or "switches" in expected):
+        if expected:
             uiid = device.get("extra", {}).get("uiid")
             if uiid in LOCAL_NO_GETSTATE_UIIDS:
                 return await self._confirm_switch_via_mdns(
                     device, expected, timeout_lan
                 )
+            confirm_ts = time.time()
             ok = await self.local.send(device, None, "getState", None, timeout_lan)
-            if ok == "online" and self._local_state_matches(device, expected):
+            if (
+                ok == "online"
+                and (device.get("localrecv") or 0) >= confirm_ts
+                and self._local_state_matches(device, expected)
+            ):
                 return "online"
             return ok if ok != "online" else "ack"
 
-        if led := device.get("params", {}).get("sledOnline"):
+        if "sledOnline" in device.get("params", {}):
+            led = device["params"]["sledOnline"]
             return await self.local.send(
                 device, {"sledOnline": led}, "sledonline", None, timeout_lan
             )
         return await self.local.send(device, None, "getState", None, timeout_lan)
+
+    async def set_inching(self, device: XDevice, outlet: int, **changes):
+        """Update one inching channel while preserving the complete pulses list."""
+        did = device["deviceid"]
+        lock = self._inching_locks.setdefault(did, asyncio.Lock())
+        async with lock:
+            source = self._inching_pending.get(did)
+            if source is None:
+                source = device.get("params", {}).get("pulses", [])
+            pulses = [dict(item) for item in source if isinstance(item, dict)]
+
+            for item in pulses:
+                if item.get("outlet") == outlet:
+                    item.update(changes)
+                    break
+            else:
+                item = {
+                    "outlet": outlet,
+                    "pulse": "off",
+                    "switch": "off",
+                    "width": 500,
+                }
+                item.update(changes)
+                pulses.append(item)
+
+            pulses.sort(key=lambda item: item.get("outlet", -1))
+            self._inching_pending[did] = pulses
+            result = await self.send(
+                device, {"pulses": pulses}, cmd_lan="pulses", timeout_lan=5
+            )
+            if result == "online":
+                self._inching_pending.pop(did, None)
+            return result
 
     @staticmethod
     def _params_have_telemetry(params: dict) -> bool:
@@ -623,7 +683,7 @@ class XRegistry(XRegistryBase):
         task_alive = False
         if self.task:
             done = getattr(self.task, "done", None)
-            task_alive = done() if callable(done) else True
+            task_alive = not done() if callable(done) else True
         if not task_alive:
             self.task = asyncio.create_task(self.run_forever())
         for deviceid in self.devices:
@@ -728,6 +788,10 @@ class XRegistry(XRegistryBase):
         device["localfail"] = 0
         device["localping"] = ts + self._sensor_update_interval(device)
         device["localrecv"] = ts
+
+        if "pulses" in params and (pending := self._inching_pending.get(mainid)):
+            if self._value_matches(params["pulses"], pending):
+                self._inching_pending.pop(mainid, None)
 
         if self._params_have_telemetry(params):
             self._note_local_telemetry(device, ts)
@@ -843,7 +907,7 @@ class XRegistry(XRegistryBase):
             "subDevId": device["deviceid"],
             "uiActive": {"outlet": outlet, "time": 60},
         }
-        asyncio.create_task(self.send_local(parent, "uiActive", params))
+        self._track_telemetry_task(self.send_local(parent, "uiActive", params))
 
     def can_cloud(self, device: XDevice) -> bool:
         if LAN_ONLY:

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 
 import aiohttp
 import pytest
@@ -850,6 +851,131 @@ def test_local_connected_dispatches_each_device_once():
     registry.local_connected()
 
     assert calls == ["1000000001", "1000000002"]
+
+
+def test_local_connected_keeps_live_poll_loop(monkeypatch):
+    registry: XRegistry = XRegistry(None)
+    registry.task = SimpleNamespace(done=lambda: False)
+
+    def unexpected_create(coro):
+        coro.close()
+        raise AssertionError("live polling loop was replaced")
+
+    monkeypatch.setattr(asyncio, "create_task", unexpected_create)
+    registry.local_connected()
+
+
+def test_local_connected_restarts_finished_poll_loop(monkeypatch):
+    registry: XRegistry = XRegistry(None)
+    old_task = SimpleNamespace(done=lambda: True)
+    new_task = object()
+    registry.task = old_task
+
+    def create(coro):
+        coro.close()
+        return new_task
+
+    monkeypatch.setattr(asyncio, "create_task", create)
+    registry.local_connected()
+
+    assert registry.task is new_task
+
+
+def test_local_stop_cancels_pending_mdns_handlers(monkeypatch):
+    monkeypatch.setattr(asyncio, "create_task", _REAL_CREATE_TASK)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    registry = XRegistryLocal(None)
+    started = asyncio.Event()
+
+    async def handler(*args):
+        started.set()
+        await asyncio.sleep(3600)
+
+    registry._handler2 = handler
+
+    async def run():
+        registry._handler1(
+            None,
+            "_ewelink._tcp.local.",
+            f"eWeLink_{DEVICEID}._ewelink._tcp.local.",
+            object(),
+        )
+        await asyncio.sleep(0)
+        assert started.is_set()
+        assert registry._handler_tasks
+        await registry.stop()
+
+    loop.run_until_complete(run())
+    loop.close()
+
+    assert not registry._handler_tasks
+
+
+def test_s40_plural_inching_ack_requires_matching_mdns_state():
+    loop = asyncio.new_event_loop()
+    registry: XRegistry = XRegistry(None)
+    registry.local.online = True
+    device = XDevice(
+        deviceid=DEVICEID,
+        extra={"uiid": 182},
+        host="192.0.2.88:8081",
+        local=True,
+        params={
+            "sledOnline": "off",
+            "pulses": [
+                {"outlet": 0, "pulse": "off", "switch": "off", "width": 500}
+            ],
+        },
+    )
+    registry.devices = {DEVICEID: device}
+    calls = []
+
+    async def local_send(dev, params=None, command=None, sequence=None, timeout=5):
+        calls.append((command, params))
+        return "ack" if command == "pulses" else "error"
+
+    async def pull_mdns(dev, **kwargs):
+        registry.local_update(
+            {
+                "deviceid": DEVICEID,
+                "params": {
+                    "pulses": [
+                        {
+                            "outlet": 0,
+                            "pulse": "on",
+                            "switch": "off",
+                            "width": 500,
+                        }
+                    ]
+                },
+            }
+        )
+        return True
+
+    registry.local.send = local_send
+    registry.local.pull_mdns = pull_mdns
+
+    ok = loop.run_until_complete(registry.set_inching(device, 0, pulse="on"))
+    loop.close()
+
+    assert ok == "online"
+    assert calls == [
+        (
+            "pulses",
+            {
+                "pulses": [
+                    {
+                        "outlet": 0,
+                        "pulse": "on",
+                        "switch": "off",
+                        "width": 500,
+                    }
+                ]
+            },
+        )
+    ]
+    assert DEVICEID not in registry._inching_pending
 
 
 def test_confirm_switch_ack_requires_matching_getstate():

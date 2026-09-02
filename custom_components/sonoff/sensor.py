@@ -368,7 +368,7 @@ class XTempCorrection(XSensor):
             if v := cache.get("tempCorrection"):
                 value += parse_float(v)
             XSensor.set_state(self, value=value)
-        except:
+        except Exception:
             pass
 
 
@@ -386,7 +386,7 @@ class XHumCorrection(XSensor):
             if v := cache.get("humCorrection"):
                 value += parse_float(v)
             XSensor.set_state(self, value=value)
-        except:
+        except Exception:
             pass
 
 
@@ -517,6 +517,22 @@ class XT5Action(XEventSesor):
             asyncio.create_task(self.clear_state())
 
 
+class XAlarmSoundType(XEntity, SensorEntity):
+    """SNZB-09P (uiid 7056) - read-only, value nested inside `alarmSetting`.
+
+    Kept read-only (rather than a select) because the full list of valid
+    `alertSound` values is unknown - only "alarm0" has been observed.
+    """
+
+    params = {"alarmSetting"}
+    uid = "alarm_sound_type"
+
+    _attr_entity_registry_enabled_default = False
+
+    def set_state(self, params: dict):
+        self._attr_native_value = params.get("alarmSetting", {}).get("alertSound")
+
+
 class XUnknown(XEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
@@ -544,7 +560,7 @@ class XHexVoltageTRVZB(XSensor):
             elif isinstance(raw, (int, float)):
                 # FW 1.4.0+: numeric value (centivolts)
                 value = raw * 0.01
-        except:
+        except Exception:
             pass
 
         # default value=None (from func params)

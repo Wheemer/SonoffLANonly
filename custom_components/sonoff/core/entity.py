@@ -15,6 +15,9 @@ ENTITY_CATEGORIES = {
     "led": EntityCategory.CONFIG,
     "pulse": EntityCategory.CONFIG,
     "pulseWidth": EntityCategory.CONFIG,
+    "inching": EntityCategory.CONFIG,
+    "inching_action": EntityCategory.CONFIG,
+    "inching_duration": EntityCategory.CONFIG,
     "rssi": EntityCategory.DIAGNOSTIC,
     "sensitivity": EntityCategory.CONFIG,
     "temperature_correction": EntityCategory.CONFIG,
@@ -37,6 +40,9 @@ NAMES = {
     "pm10": "PM10",
     "pulse": "INCHING",
     "pulseWidth": "INCHING Duration",
+    "inching": "Inching",
+    "inching_action": "Inching action",
+    "inching_duration": "Inching duration",
     "update_interval": "Update interval",
 }
 
@@ -62,8 +68,10 @@ class XEntity(Entity):
             self._attr_unique_id = f"{device['deviceid']}_{self.uid}"
 
             if not self.uid.isdigit():
-                self._attr_entity_category = ENTITY_CATEGORIES.get(self.uid)
-                self._attr_icon = ICONS.get(self.uid)
+                if category := ENTITY_CATEGORIES.get(self.uid):
+                    self._attr_entity_category = category
+                if icon := ICONS.get(self.uid):
+                    self._attr_icon = icon
 
                 s = NAMES.get(self.uid) or self.uid.title().replace("_", " ")
                 self._attr_name = f"{device['name']} {s}"
@@ -142,7 +150,8 @@ class XEntity(Entity):
         self.internal_update(None)
 
     async def async_update(self):
-        if led := self.device["params"].get("sledOnline"):
+        if "sledOnline" in self.device["params"]:
+            led = self.device["params"]["sledOnline"]
             # device response with current status if we change any param
             await self.ewelink.send(
                 self.device, params_lan={"sledOnline": led}, cmd_lan="sledonline"

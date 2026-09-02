@@ -6,6 +6,7 @@ devices and their devicekey.
 
 import asyncio
 import base64
+from contextlib import suppress
 import errno
 import hashlib
 import ipaddress
@@ -87,6 +88,7 @@ class XRegistryLocal(XRegistryBase):
         super().__init__(session)
         self._browser_restart_lock = asyncio.Lock()
         self._browser_restart_at: float | None = None
+        self._handler_tasks: set[asyncio.Task] = set()
 
     def start(self, zeroconf: Zeroconf):
         self.zeroconf = zeroconf
@@ -97,12 +99,16 @@ class XRegistryLocal(XRegistryBase):
         self.dispatcher_send(SIGNAL_CONNECTED)
 
     async def stop(self):
-        if not self.online:
-            return
         self.online = False
         if self.browser:
             await self.browser.async_cancel()
             self.browser = None
+        for task in list(self._handler_tasks):
+            task.cancel()
+        for task in list(self._handler_tasks):
+            with suppress(asyncio.CancelledError):
+                await task
+        self._handler_tasks.clear()
         self.zeroconf = None
 
     async def restart_browser(self, cooldown: float = 10.0) -> bool:
@@ -142,7 +148,11 @@ class XRegistryLocal(XRegistryBase):
         if not deviceid:
             return
 
-        asyncio.create_task(self._handler2(zeroconf, service_type, name, deviceid))
+        task = asyncio.create_task(
+            self._handler2(zeroconf, service_type, name, deviceid)
+        )
+        self._handler_tasks.add(task)
+        task.add_done_callback(self._handler_tasks.discard)
 
     async def _handler2(
         self, zeroconf: Zeroconf, service_type: str, name: str, deviceid: str
@@ -325,7 +335,7 @@ class XRegistryLocal(XRegistryBase):
                         if params and params.get("subDevId"):
                             msg["subdevid"] = params["subDevId"]
                         self.dispatcher_send(SIGNAL_UPDATE, msg)
-                    elif command in ("switch", "switches") and params:
+                    elif command in ("switch", "switches", "pulse", "pulses") and params:
                         return "ack"
                     elif command in ("sledonline", "statistics", "uiActive"):
                         return "ack"

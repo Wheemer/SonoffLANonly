@@ -20,6 +20,7 @@ from homeassistant.components.switch import SwitchEntity
 from .ewelink import XDevice
 from ..alarm_control_panel import XPanelAlarm
 from ..binary_sensor import (
+    XAlarmPower,
     XBinarySensor,
     XHumanSensor,
     XLightSensor,
@@ -27,10 +28,18 @@ from ..binary_sensor import (
     XWiFiDoor,
     XZigbeeMotion,
 )
-from ..button import XButton, XT5Effect
+from ..button import XAlarmButton, XButton, XT5Effect
 from ..climate import XClimateNS, XClimateTH, XThermostat, XThermostatTRVZB
 from ..core.entity import XEntity
-from ..cover import XCover, XCoverDualR3, XCoverOP, XCoverT5, XZBCover, XZigbeeCover
+from ..cover import (
+    XCover,
+    XCover216,
+    XCoverDualR3,
+    XCoverOP,
+    XCoverT5,
+    XZBCover,
+    XZigbeeCover,
+)
 from ..fan import XDiffuserFan, XFan, XFan17, XFanDualR3, XToggleFan
 from ..light import (
     XDiffuserLight,
@@ -54,10 +63,18 @@ from ..light import (
     XZigbeeLight,
 )
 from ..media_player import XPanelBuzzer
-from ..number import XPulseWidth, XSensitivity, XTempCorrectionNumber
+from ..number import (
+    XAlarmDuration,
+    XAlarmVolume,
+    XInchingDuration,
+    XPulseWidth,
+    XSensitivity,
+    XTempCorrectionNumber,
+)
 from ..remote import XRemote
-from ..select import XSelectStartup, XStartup
+from ..select import XInchingAction, XSelectStartup, XStartup
 from ..sensor import (
+    XAlarmSoundType,
     XButtonKey,
     XButtonLocalKey,
     XCPUTemperature,
@@ -79,7 +96,10 @@ from ..sensor import (
     XWiFiDoorBattery,
 )
 from ..switch import (
+    XAlarmLight,
+    XAlarmVoice,
     XBoolSwitch,
+    XInchingSwitch,
     XIntSwitch,
     XPanelScreen,
     XSwitch,
@@ -261,6 +281,8 @@ DEVICES = {
         XSwitch,
         LED,
         RSSI,
+        PULSE,
+        XPulseWidth,
         spec(XSensor, param="current"),
         spec(XSensor, param="power"),
         spec(XSensor, param="voltage"),
@@ -532,6 +554,9 @@ DEVICES = {
         Startup4,
     ]
     + TX_ULTIMATE,
+    # CK-BL602-TC-01(216), CoolKit gate motor controller
+    # (VEVOR MD370/MD750 etc.), https://github.com/AlexxIT/SonoffLAN/issues/1819
+    216: [XCover216, RSSI],
     # CK-BL602-PCSW-01(225), https://github.com/AlexxIT/SonoffLAN/issues/1616
     225: [
         spec(XBoolSwitch, param="switch"),
@@ -759,6 +784,19 @@ DEVICES = {
     7047: [spec(XBoolSwitch, param="switch_00", uid="switch"), Battery, ZRSSI],
     # SNZB-03PR2 https://github.com/AlexxIT/SonoffLAN/issues/1824
     7055: [XHumanSensor, spec(XSensor, param="illumination"), Battery, ZRSSI],
+    # SNZB-09P (Indoor Siren)
+    7056: [
+        XAlarmButton,
+        XAlarmVoice,
+        XAlarmLight,
+        XAlarmDuration,
+        XAlarmVolume,
+        XAlarmSoundType,
+        spec(XSensor, param="alarmType", uid="alarm_status"),
+        XAlarmPower,
+        Battery,
+        ZRSSI,
+    ],
 }
 
 
@@ -766,7 +804,7 @@ def get_spec(device: dict) -> list:
     uiid = device["extra"]["uiid"]
 
     if uiid in DEVICES:
-        classes = DEVICES[uiid]
+        classes = list(DEVICES[uiid])
     elif "switch" in device["params"]:
         classes = SPEC_SWITCH
     elif "switches" in device["params"]:
@@ -793,6 +831,33 @@ def get_spec(device: dict) -> list:
     if uiid == 266:
         params = device["params"]
         classes = [cls for cls in classes if cls.uid in params or cls.param in params]
+
+    pulses = device["params"].get("pulses")
+    if isinstance(pulses, list):
+        outlets = sorted(
+            {
+                item.get("outlet")
+                for item in pulses
+                if isinstance(item, dict) and isinstance(item.get("outlet"), int)
+            }
+        )
+        for outlet in outlets:
+            suffix = "" if len(outlets) == 1 else f"_{outlet + 1}"
+            classes.extend(
+                [
+                    spec(XInchingSwitch, channel=outlet, uid=f"inching{suffix}"),
+                    spec(
+                        XInchingDuration,
+                        channel=outlet,
+                        uid=f"inching_duration{suffix}",
+                    ),
+                    spec(
+                        XInchingAction,
+                        channel=outlet,
+                        uid=f"inching_action{suffix}",
+                    ),
+                ]
+            )
 
     if "device_class" in device:
         classes = get_custom_spec(classes, device["device_class"])

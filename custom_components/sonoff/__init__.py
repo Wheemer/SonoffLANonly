@@ -18,7 +18,7 @@ from homeassistant.const import (
     MINOR_VERSION,
 )
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.device_registry import async_get as device_registry
 from homeassistant.helpers.storage import Store
@@ -62,7 +62,7 @@ PLATFORMS = [
     "remote",
     "switch",
     "number",
-    "select"
+    "select",
 ]
 
 CONFIG_SCHEMA = vol.Schema(

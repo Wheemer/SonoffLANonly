@@ -1,5 +1,5 @@
 from homeassistant.components.select import SelectEntity
-from homeassistant.const import EntityCategory
+from homeassistant.helpers.entity import EntityCategory
 
 from .core.const import DOMAIN
 from .core.entity import XEntity
@@ -71,8 +71,8 @@ class XSelectStartup(XEntity, SelectEntity):
                 {
                     "outlet": self.channel,
                     "startup": option,
-                    "enableDelay": 0, # this should be exposed as a config option in the future, for inching devices
-                    "width": 1000, # i don't know what this is for, but it seems to not have any effect on the device
+                    "enableDelay": 0,  # this should be exposed as a config option in the future, for inching devices
+                    "width": 1000,  # i don't know what this is for, but it seems to not have any effect on the device
                 }
             )
 
@@ -80,9 +80,29 @@ class XSelectStartup(XEntity, SelectEntity):
         await self.ewelink.send(self.device, {"configure": configure_list})
 
 
+class XInchingAction(XEntity, SelectEntity):
+    """Relay action performed first when channel inching is enabled."""
+
+    params = {"pulses"}
+    channel: int = 0
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_options = ["on", "off"]
+
+    def set_state(self, params: dict):
+        for item in params.get("pulses", []):
+            if item.get("outlet") == self.channel:
+                self._attr_current_option = item.get("switch", "off")
+                return
+
+    async def async_select_option(self, option: str):
+        await self.ewelink.set_inching(self.device, self.channel, switch=option)
+
+
 class XStartup(XEntity, SelectEntity):
     param = "startup"
 
+    _attr_current_option = None
     _attr_entity_category = EntityCategory.CONFIG
     _attr_options = ["off", "on", "stay"]
 

@@ -522,7 +522,7 @@ class XRegistryCloud(ResponseWaiter, XRegistryBase):
             if not self.auth:
                 try:
                     assert await self.login(**kwargs)
-                except:
+                except Exception:
                     fails += 1
                     continue
 
@@ -650,5 +650,5 @@ async def _ping(ws: ClientWebSocketResponse, heartbeat: int):
         while heartbeat:
             await asyncio.sleep(heartbeat)
             await ws.send_str("ping")
-    except:
+    except Exception:
         pass
