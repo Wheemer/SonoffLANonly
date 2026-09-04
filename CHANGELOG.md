@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.1
+
+- Recover S40/UIID 182 telemetry after Home Assistant's shared zeroconf sockets stall following a network-interface disruption.
+- Start an independently owned mDNS listener after three missed S40 telemetry reads and use it for both active queries and passive callbacks.
+- Close the recovery listener cleanly during integration unload and reload.
+
 ## 4.0.0
 
 - Start a clean, independent SonoffLANonly version line after the LAN-only fork reached a stable release boundary.

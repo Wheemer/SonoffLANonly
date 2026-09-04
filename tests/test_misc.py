@@ -1459,11 +1459,29 @@ def test_local_restart_browser_replaces_stalled_browser(monkeypatch):
         async def async_cancel(self):
             self.cancelled = True
 
+    class RecoveryZeroconf:
+        def __init__(self):
+            self.zeroconf = object()
+            self.closed = False
+
+        async def async_close(self):
+            self.closed = True
+
     old_browser = Browser()
-    new_browser = Browser()
+    new_browsers = []
+
+    def create_browser(*args):
+        browser = Browser()
+        new_browsers.append(browser)
+        return browser
+
     monkeypatch.setattr(
         "custom_components.sonoff.core.ewelink.local.AsyncServiceBrowser",
-        lambda *args: new_browser,
+        create_browser,
+    )
+    monkeypatch.setattr(
+        "custom_components.sonoff.core.ewelink.local.AsyncZeroconf",
+        RecoveryZeroconf,
     )
 
     loop = asyncio.new_event_loop()
@@ -1478,7 +1496,48 @@ def test_local_restart_browser_replaces_stalled_browser(monkeypatch):
 
     assert restarted
     assert old_browser.cancelled
-    assert registry.browser is new_browser
+    assert registry.browser is new_browsers[0]
+    assert registry._recovery_browser is new_browsers[1]
+    assert registry._recovery_zeroconf.zeroconf is not registry.zeroconf
+
+
+def test_ui_active_stale_refresh_restarts_mdns_after_third_miss():
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    device = XDevice(
+        deviceid=DEVICEID,
+        extra={"uiid": 182},
+        local=True,
+        localtelemetry_at=50,
+        localsensornodata=2,
+        params={"sledOnline": "on"},
+    )
+    registry.devices = {DEVICEID: device}
+    pulls = 0
+    restarts = 0
+
+    async def pull_mdns(dev, **kwargs):
+        nonlocal pulls
+        pulls += 1
+        if pulls == 2:
+            registry._note_local_telemetry(dev, 100)
+            return True
+        return False
+
+    async def restart_browser():
+        nonlocal restarts
+        restarts += 1
+        return True
+
+    registry._pull_mdns_bounded = pull_mdns
+    registry.local.restart_browser = restart_browser
+
+    asyncio.run(registry._refresh_ui_active_telemetry(device, 100))
+
+    assert pulls == 2
+    assert restarts == 1
+    assert device["localtelemetry_at"] == 100
+    assert device["localsensornodata"] == 0
 
 
 def test_local_ack_only_command_does_not_fake_switch_state():

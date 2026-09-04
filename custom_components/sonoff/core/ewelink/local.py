@@ -20,7 +20,7 @@ from aiohttp.hdrs import CONTENT_TYPE
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from zeroconf import ServiceStateChange, Zeroconf
-from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
+from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 
 from .base import SIGNAL_CONNECTED, SIGNAL_UPDATE, XDevice, XRegistryBase
 
@@ -88,6 +88,8 @@ class XRegistryLocal(XRegistryBase):
         super().__init__(session)
         self._browser_restart_lock = asyncio.Lock()
         self._browser_restart_at: float | None = None
+        self._recovery_zeroconf: AsyncZeroconf | None = None
+        self._recovery_browser: AsyncServiceBrowser | None = None
         self._handler_tasks: set[asyncio.Task] = set()
 
     def start(self, zeroconf: Zeroconf):
@@ -103,6 +105,7 @@ class XRegistryLocal(XRegistryBase):
         if self.browser:
             await self.browser.async_cancel()
             self.browser = None
+        await self._stop_recovery_browser()
         for task in list(self._handler_tasks):
             task.cancel()
         for task in list(self._handler_tasks):
@@ -130,9 +133,31 @@ class XRegistryLocal(XRegistryBase):
             self.browser = AsyncServiceBrowser(
                 self.zeroconf, SERVICE_TYPE, [self._handler1]
             )
+
+            # Home Assistant's shared Zeroconf sockets can survive an interface
+            # loss in a permanently stale state. Keep an independently owned
+            # listener as the recovery path instead of recycling only the same
+            # shared sockets.
+            await self._stop_recovery_browser()
+            self._recovery_zeroconf = AsyncZeroconf()
+            self._recovery_browser = AsyncServiceBrowser(
+                self._recovery_zeroconf.zeroconf,
+                SERVICE_TYPE,
+                [self._handler1],
+            )
             self._browser_restart_at = now
-            _LOGGER.warning("Restarted stalled eWeLink mDNS browser")
+            _LOGGER.warning(
+                "Restarted stalled eWeLink mDNS browser with independent listener"
+            )
             return True
+
+    async def _stop_recovery_browser(self) -> None:
+        if self._recovery_browser:
+            await self._recovery_browser.async_cancel()
+            self._recovery_browser = None
+        if self._recovery_zeroconf:
+            await self._recovery_zeroconf.async_close()
+            self._recovery_zeroconf = None
 
     def _handler1(
         self,
@@ -188,42 +213,58 @@ class XRegistryLocal(XRegistryBase):
 
     async def pull_mdns(self, device: XDevice, timeout_ms: int = 1500) -> bool:
         """Actively query mDNS after sledonline ack-only HTTP responses."""
-        deviceid = device["deviceid"]
-        zc = self.zeroconf
-        own_zc = False
-        if not zc:
-            zc = Zeroconf()
-            own_zc = True
+        if self._recovery_zeroconf and await self._pull_mdns_from(
+            self._recovery_zeroconf.zeroconf, device, timeout_ms
+        ):
+            return True
+
+        if self.zeroconf and await self._pull_mdns_from(
+            self.zeroconf, device, timeout_ms
+        ):
+            return True
+
+        if self.zeroconf:
+            return False
+
+        temporary = AsyncZeroconf()
         try:
-            for name in mdns_service_candidates(deviceid, device.get("mdns_service")):
-                try:
-                    info = AsyncServiceInfo(SERVICE_TYPE, name)
-                    if not await info.async_request(zc, timeout_ms) or not info.properties:
-                        continue
-
-                    host = None
-                    for addr in info.addresses:
-                        try:
-                            addr = ipaddress.IPv4Address(addr)
-                        except ipaddress.AddressValueError:
-                            continue
-                        host = f"{addr}:{info.port}" if info.port else str(addr)
-                        break
-                    if not host and info.server and info.port:
-                        host = f"{info.server}:{info.port}"
-
-                    data = {
-                        k.decode(): v.decode() if isinstance(v, bytes) else v
-                        for k, v in info.properties.items()
-                    }
-                    device["mdns_service"] = name
-                    self._handler3(deviceid, host, data, service_name=name)
-                    return True
-                except Exception as e:
-                    _LOGGER.debug(f"{deviceid} <= Local0 | pull_mdns {name}", exc_info=e)
+            return await self._pull_mdns_from(temporary.zeroconf, device, timeout_ms)
         finally:
-            if own_zc:
-                zc.close()
+            await temporary.async_close()
+
+    async def _pull_mdns_from(
+        self, zeroconf: Zeroconf, device: XDevice, timeout_ms: int
+    ) -> bool:
+        deviceid = device["deviceid"]
+        for name in mdns_service_candidates(deviceid, device.get("mdns_service")):
+            try:
+                info = AsyncServiceInfo(SERVICE_TYPE, name)
+                if (
+                    not await info.async_request(zeroconf, timeout_ms)
+                    or not info.properties
+                ):
+                    continue
+
+                host = None
+                for addr in info.addresses:
+                    try:
+                        addr = ipaddress.IPv4Address(addr)
+                    except ipaddress.AddressValueError:
+                        continue
+                    host = f"{addr}:{info.port}" if info.port else str(addr)
+                    break
+                if not host and info.server and info.port:
+                    host = f"{info.server}:{info.port}"
+
+                data = {
+                    k.decode(): v.decode() if isinstance(v, bytes) else v
+                    for k, v in info.properties.items()
+                }
+                device["mdns_service"] = name
+                self._handler3(deviceid, host, data, service_name=name)
+                return True
+            except Exception as e:
+                _LOGGER.debug(f"{deviceid} <= Local0 | pull_mdns {name}", exc_info=e)
         return False
 
     def _handler3(
