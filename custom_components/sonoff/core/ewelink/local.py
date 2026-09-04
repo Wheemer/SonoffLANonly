@@ -89,7 +89,6 @@ class XRegistryLocal(XRegistryBase):
         self._browser_restart_lock = asyncio.Lock()
         self._browser_restart_at: float | None = None
         self._recovery_zeroconf: AsyncZeroconf | None = None
-        self._recovery_browser: AsyncServiceBrowser | None = None
         self._handler_tasks: set[asyncio.Task] = set()
 
     def start(self, zeroconf: Zeroconf):
@@ -105,7 +104,7 @@ class XRegistryLocal(XRegistryBase):
         if self.browser:
             await self.browser.async_cancel()
             self.browser = None
-        await self._stop_recovery_browser()
+        await self._stop_recovery_resolver()
         for task in list(self._handler_tasks):
             task.cancel()
         for task in list(self._handler_tasks):
@@ -134,27 +133,19 @@ class XRegistryLocal(XRegistryBase):
                 self.zeroconf, SERVICE_TYPE, [self._handler1]
             )
 
-            # Home Assistant's shared Zeroconf sockets can survive an interface
-            # loss in a permanently stale state. Keep an independently owned
-            # listener as the recovery path instead of recycling only the same
-            # shared sockets.
-            await self._stop_recovery_browser()
+            # A fresh resolver recovers active reads when Home Assistant's
+            # long-lived shared Zeroconf sockets survive an interface loss in a
+            # stale state. Do not attach another browser: the shared browser
+            # remains the passive callback path.
+            await self._stop_recovery_resolver()
             self._recovery_zeroconf = AsyncZeroconf()
-            self._recovery_browser = AsyncServiceBrowser(
-                self._recovery_zeroconf.zeroconf,
-                SERVICE_TYPE,
-                [self._handler1],
-            )
             self._browser_restart_at = now
             _LOGGER.warning(
-                "Restarted stalled eWeLink mDNS browser with independent listener"
+                "Restarted stalled eWeLink mDNS browser with fresh resolver"
             )
             return True
 
-    async def _stop_recovery_browser(self) -> None:
-        if self._recovery_browser:
-            await self._recovery_browser.async_cancel()
-            self._recovery_browser = None
+    async def _stop_recovery_resolver(self) -> None:
         if self._recovery_zeroconf:
             await self._recovery_zeroconf.async_close()
             self._recovery_zeroconf = None

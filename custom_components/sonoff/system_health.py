@@ -32,7 +32,7 @@ async def system_health_info(hass: HomeAssistant):
         for device in registry.devices.values():
             if "local" in device:
                 local_total += 1
-                if registry.can_local(device):
+                if registry.local_available(device):
                     local_online += 1
 
     source_hash = await hass.async_add_executor_job(xutils.source_hash)

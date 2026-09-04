@@ -883,10 +883,11 @@ def test_run_forever_skips_overlapping_poll_for_same_device(monkeypatch):
     assert calls["n"] == 1
 
 
-def test_send_local_connect_fail_marks_unreachable_host():
+def test_send_local_connect_fail_marks_path_unavailable_not_incapable():
     loop = asyncio.new_event_loop()
     # noinspection PyTypeChecker
     registry: XRegistry = XRegistry(None)
+    registry.local.online = True
     device = XDevice(
         deviceid=DEVICEID,
         host="192.0.2.88:8081",
@@ -910,8 +911,60 @@ def test_send_local_connect_fail_marks_unreachable_host():
 
     assert device["localconnectfail"] == 3
     assert device["localconnectfail_at"] > 0
-    assert device["local"] is False
+    assert device["local"] is True
+    assert registry.can_local(device)
+    assert not registry.local_available(device)
     assert device["localsensorfail"] == 3
+
+
+def test_sensor_protocol_error_does_not_mark_lan_path_unavailable():
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    registry.local.online = True
+    device = XDevice(
+        deviceid=DEVICEID,
+        host="192.0.2.88:8081",
+        local=True,
+        localfail=0,
+        localping=0,
+        params={"sledOnline": "on"},
+    )
+
+    async def local_send(*args, **kwargs):
+        return "error"
+
+    registry.local.send = local_send
+    asyncio.run(
+        registry.send_local(device, "uiActive", {"uiActive": 60, "NO_SAVE_DB": True})
+    )
+
+    assert device["localsensorfail"] == 1
+    assert "localconnectfail" not in device
+    assert registry.local_available(device)
+
+
+def test_lan_control_retries_after_transport_availability_failure():
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    registry.local.online = True
+    device = XDevice(
+        deviceid=DEVICEID,
+        host="192.0.2.88:8081",
+        local=True,
+        localconnectfail=3,
+        params={"switch": "on"},
+    )
+    calls = []
+
+    async def local_send(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "online"
+
+    registry.local.send = local_send
+    result = asyncio.run(registry.send(device, {"switch": "off"}))
+
+    assert result == "online"
+    assert len(calls) == 1
 
 
 def test_successful_retry_clears_failure_latch_before_availability_dispatch():
@@ -932,7 +985,9 @@ def test_successful_retry_clears_failure_latch_before_availability_dispatch():
     availability_at_dispatch = []
     registry.dispatcher_connect(
         DEVICEID,
-        lambda *args: availability_at_dispatch.append(registry.can_local(device)),
+        lambda *args: availability_at_dispatch.append(
+            registry.local_available(device)
+        ),
     )
 
     async def local_send(*args, **kwargs):
@@ -1497,7 +1552,7 @@ def test_local_restart_browser_replaces_stalled_browser(monkeypatch):
     assert restarted
     assert old_browser.cancelled
     assert registry.browser is new_browsers[0]
-    assert registry._recovery_browser is new_browsers[1]
+    assert len(new_browsers) == 1
     assert registry._recovery_zeroconf.zeroconf is not registry.zeroconf
 
 

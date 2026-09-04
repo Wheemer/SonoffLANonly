@@ -28,7 +28,7 @@ LOCAL_MDNS_PULL_TIMEOUT_MS = 1500
 LOCAL_MDNS_CONCURRENCY = 3
 LOCAL_NO_GETSTATE_UIIDS = frozenset({182, 190, 262, 277})
 LOCAL_CONNECT_FAIL_CODES = frozenset(
-    {"timeout", "error", "E#CON", "E#COE", "E#CRE", "E#COS"}
+    {"timeout", "E#CON", "E#COE", "E#CRE", "E#COS"}
 )
 LOCAL_RUNTIME_DEVICE_KEYS = frozenset(
     {
@@ -141,7 +141,10 @@ class XRegistry(XRegistryBase):
             for key in LOCAL_RUNTIME_DEVICE_KEYS:
                 device.pop(key, None)
             if device.get("host"):
-                device.setdefault("local", False)
+                if LAN_ONLY:
+                    device["local"] = True
+                else:
+                    device.setdefault("local", False)
                 device.setdefault("localfail", 0)
                 device.setdefault("localping", 0)
                 device.setdefault("localuiactiveping", 0)
@@ -562,8 +565,7 @@ class XRegistry(XRegistryBase):
         ts = time.time()
         device["localconnectfail"] = device.get("localconnectfail", 0) + 1
         device["localconnectfail_at"] = ts
-        if device["localconnectfail"] >= 3 and device.get("local"):
-            device["local"] = False
+        if device["localconnectfail"] == 3:
             did = device["deviceid"]
             _LOGGER.debug(f"{did} !! Local4 | Host unreachable")
             self.dispatcher_send(did)
@@ -1005,6 +1007,7 @@ class XRegistry(XRegistryBase):
         return device.get("online")
 
     def can_local(self, device: XDevice) -> bool:
+        """Return whether this device has a usable LAN control path."""
         if not self.local.online:
             return False
         if parent := device.get("parent"):
@@ -1015,10 +1018,17 @@ class XRegistry(XRegistryBase):
                     return True
                 return parent.get("local")
         if LAN_ONLY and device.get("host"):
-            if device.get("localconnectfail", 0) >= 3:
-                return False
             return True
         return device.get("local")
+
+    def local_available(self, device: XDevice) -> bool:
+        """Return whether the LAN path is currently responding."""
+        if not self.can_local(device):
+            return False
+        target = device.get("parent", device)
+        if LAN_ONLY and target.get("host"):
+            return target.get("localconnectfail", 0) < 3
+        return bool(target.get("local"))
 
     async def send_local(
         self, device: XDevice, command: str = None, params: dict = None
@@ -1078,12 +1088,6 @@ class XRegistry(XRegistryBase):
 
         if device["localfail"] < 3:
             return
-
-        if device["local"]:
-            device["local"] = False
-            did = device["deviceid"]
-            _LOGGER.debug(f"{did} !! Local4 | Device offline")
-            self.dispatcher_send(did)
 
         device["localping"] = time.time() + min(
             LOCAL_RETRY_SECONDS, self._sensor_update_interval(device)

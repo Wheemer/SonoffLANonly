@@ -73,7 +73,7 @@ class XWiFiDoor(XBinarySensor):
     def internal_available(self) -> bool:
         # device with buggy online status
         if LAN_ONLY:
-            return self.ewelink.can_local(self.device)
+            return self.ewelink.local_available(self.device)
         return self.ewelink.cloud.online
 
 

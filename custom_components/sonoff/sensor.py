@@ -451,7 +451,7 @@ class XWiFiDoorBattery(XSensor):
     def internal_available(self) -> bool:
         # device with buggy online status
         if LAN_ONLY:
-            return self.ewelink.can_local(self.device)
+            return self.ewelink.local_available(self.device)
         return self.ewelink.cloud.online
 
 
@@ -632,7 +632,7 @@ class XConnection(XEntity, BinarySensorEntity):
     _attr_entity_registry_enabled_default = False
 
     def internal_update(self, params: dict = None):
-        local = self.ewelink.can_local(self.device)
+        local = self.ewelink.local_available(self.device)
 
         recv = self.device.get("localrecv") or 0
         telemetry_at = self.device.get("localtelemetry_at") or 0

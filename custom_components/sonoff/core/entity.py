@@ -125,7 +125,7 @@ class XEntity(Entity):
         pass
 
     def internal_available(self) -> bool:
-        return self.ewelink.can_cloud(self.device) or self.ewelink.can_local(
+        return self.ewelink.can_cloud(self.device) or self.ewelink.local_available(
             self.device
         )
 

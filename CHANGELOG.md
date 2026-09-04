@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.2
+
+- Keep LAN capability separate from current transport availability so an offline mark never disables future local control attempts.
+- Treat a valid device HTTP protocol rejection as proof of reachability instead of a connection failure.
+- Replace the ineffective secondary mDNS browser with a fresh active resolver, matching the recovery path verified against live S40 devices.
+
 ## 4.0.1
 
 - Recover S40/UIID 182 telemetry after Home Assistant's shared zeroconf sockets stall following a network-interface disruption.
