@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.0.3
+
+- Refresh entity availability after every successful LAN probe so channel entities recover even when LAN capability remained enabled through a transport outage.
+
 ## 4.0.2
 
 - Keep LAN capability separate from current transport availability so an offline mark never disables future local control attempts.

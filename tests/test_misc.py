@@ -974,7 +974,7 @@ def test_successful_retry_clears_failure_latch_before_availability_dispatch():
     device = XDevice(
         deviceid=DEVICEID,
         host="192.0.2.36:8081",
-        local=False,
+        local=True,
         localfail=3,
         localping=0,
         localconnectfail=3,
@@ -995,6 +995,7 @@ def test_successful_retry_clears_failure_latch_before_availability_dispatch():
 
     registry.local.send = local_send
 
+    assert registry.local_available(device) is False
     asyncio.run(registry.send_local(device))
 
     assert availability_at_dispatch == [True]

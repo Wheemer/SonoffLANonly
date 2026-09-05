@@ -1044,11 +1044,12 @@ class XRegistry(XRegistryBase):
             )
             device.pop("localconnectfail", None)
             device.pop("localconnectfail_at", None)
+            did = device["deviceid"]
             if not was_local:
-                did = device["deviceid"]
                 _LOGGER.debug(f"{did} !! Local4 | Device online")
-                # Notify only after every availability gate has been cleared.
-                self.dispatcher_send(did)
+            # A device may remain LAN-capable while its entities are unavailable
+            # after transport failures. Refresh them after every successful probe.
+            self.dispatcher_send(did)
             if poll_ts is not None:
                 device["localsensorack_at"] = time.time()
                 if (device.get("localtelemetry_at") or 0) >= poll_ts:
