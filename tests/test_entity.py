@@ -519,9 +519,9 @@ def test_power_entity_telemetry_polled_via_run_forever(monkeypatch):
     assert current.force_update is True
     assert voltage.force_update is True
     assert calls == [
-        (power.device, "uiActive", {"uiActive": 60, "NO_SAVE_DB": True})
+        (power.device, "sledonline", {"sledOnline": "on"})
     ]
-    assert power.device["localuiactiveping"] == 70
+    assert power.device["localsensorping"] == 35
 
 
 def test_available():

@@ -271,10 +271,8 @@ def test_local_sensor_refresh_uses_separate_retry_gate(monkeypatch):
 
     asyncio.run(registry.update_local(device, 40))
 
-    assert calls == [
-        (device, "uiActive", {"uiActive": 60, "NO_SAVE_DB": True})
-    ]
-    assert device["localuiactiveping"] == 90
+    assert calls == [(device, "sledonline", {"sledOnline": "on"})]
+    assert device["localsensorping"] == 42
 
 
 def test_send_local_records_sensor_ack_without_telemetry(monkeypatch):
@@ -456,7 +454,7 @@ def test_general_device_refreshes_only_after_callback_interval():
     assert calls == [(device,)]
 
 
-def test_update_local_skips_getstate_for_s40_uiids(monkeypatch):
+def test_update_local_skips_getstate_for_s40_uiids():
     # noinspection PyTypeChecker
     registry: XRegistry = XRegistry(None)
     now = time.time()
@@ -476,22 +474,20 @@ def test_update_local_skips_getstate_for_s40_uiids(monkeypatch):
     registry.send_local = send_local
 
     asyncio.run(registry.update_local(device, now))
-    assert calls == [
-        (device, "uiActive", {"uiActive": 60, "NO_SAVE_DB": True})
-    ]
-    assert device["localuiactiveping"] == now + 50
+    assert calls == [(device, "sledonline", {"sledOnline": "on"})]
 
 
-def test_update_local_refreshes_ui_active_lease_every_50_seconds():
+@pytest.mark.parametrize("uiid", [32, 182])
+def test_standalone_power_devices_use_sledonline_at_update_interval(uiid):
     # noinspection PyTypeChecker
     registry: XRegistry = XRegistry(None)
     device = XDevice(
         deviceid=DEVICEID,
-        extra={"uiid": 182},
+        extra={"uiid": uiid},
         local=True,
-        localping=0,
+        localping=9999,
         localtelemetry_at=100,
-        localuiactiveping=150,
+        localsensorping=0,
         update_interval=60,
         params={"sledOnline": "on"},
     )
@@ -504,16 +500,13 @@ def test_update_local_refreshes_ui_active_lease_every_50_seconds():
 
     asyncio.run(registry.update_local(device, 149))
     assert calls == []
-    assert device["localping"] == 150
 
-    asyncio.run(registry.update_local(device, 150))
-    assert calls == [
-        (device, "uiActive", {"uiActive": 60, "NO_SAVE_DB": True})
-    ]
-    assert device["localuiactiveping"] == 200
+    asyncio.run(registry.update_local(device, 160))
+    assert calls == [(device, "sledonline", {"sledOnline": "on"})]
+    assert device["localsensorping"] == 220
 
 
-def test_ui_active_device_uses_update_interval_for_stale_mdns_refresh():
+def test_s40_poll_preserves_disabled_sledonline_value():
     # noinspection PyTypeChecker
     registry: XRegistry = XRegistry(None)
     device = XDevice(
@@ -523,60 +516,20 @@ def test_ui_active_device_uses_update_interval_for_stale_mdns_refresh():
         localping=9999,
         localtelemetry_at=99,
         localsensorping=0,
-        localuiactiveping=150,
         update_interval=1,
-        params={"sledOnline": "on"},
+        params={"sledOnline": "off"},
     )
-    pulls = []
-
-    async def pull_mdns(dev):
-        pulls.append(dev)
-        registry._note_local_telemetry(dev, 100)
-        return True
-
-    registry.devices = {DEVICEID: device}
-    registry._pull_mdns_bounded = pull_mdns
-
-    asyncio.run(registry.update_local(device, 100))
-
-    assert pulls == [device]
-    assert device["localsensorping"] == 101
-    assert device["localtelemetry_at"] == 100
-    assert "localsensorpending" not in device
-
-
-def test_ui_active_stale_refresh_does_not_renew_lease_early():
-    # noinspection PyTypeChecker
-    registry: XRegistry = XRegistry(None)
-    device = XDevice(
-        deviceid=DEVICEID,
-        extra={"uiid": 32},
-        local=True,
-        localping=9999,
-        localtelemetry_at=90,
-        localsensorping=0,
-        localuiactiveping=150,
-        update_interval=10,
-        params={"sledOnline": "on"},
-    )
-    sends = []
+    calls = []
 
     async def send_local(*args, **kwargs):
-        sends.append(args)
+        calls.append(args)
 
-    async def pull_mdns(dev):
-        return False
-
-    registry.devices = {DEVICEID: device}
     registry.send_local = send_local
-    registry._pull_mdns_bounded = pull_mdns
 
     asyncio.run(registry.update_local(device, 100))
 
-    assert sends == []
-    assert device["localuiactiveping"] == 150
-    assert device["localsensorping"] == 110
-    assert device["localsensornodata"] == 1
+    assert calls == [(device, "sledonline", {"sledOnline": "off"})]
+    assert device["localsensorping"] == 101
 
 
 def test_update_local_does_not_overlap_pending_telemetry_watchdog():
@@ -1555,45 +1508,6 @@ def test_local_restart_browser_replaces_stalled_browser(monkeypatch):
     assert registry.browser is new_browsers[0]
     assert len(new_browsers) == 1
     assert registry._recovery_zeroconf.zeroconf is not registry.zeroconf
-
-
-def test_ui_active_stale_refresh_restarts_mdns_after_third_miss():
-    # noinspection PyTypeChecker
-    registry: XRegistry = XRegistry(None)
-    device = XDevice(
-        deviceid=DEVICEID,
-        extra={"uiid": 182},
-        local=True,
-        localtelemetry_at=50,
-        localsensornodata=2,
-        params={"sledOnline": "on"},
-    )
-    registry.devices = {DEVICEID: device}
-    pulls = 0
-    restarts = 0
-
-    async def pull_mdns(dev, **kwargs):
-        nonlocal pulls
-        pulls += 1
-        if pulls == 2:
-            registry._note_local_telemetry(dev, 100)
-            return True
-        return False
-
-    async def restart_browser():
-        nonlocal restarts
-        restarts += 1
-        return True
-
-    registry._pull_mdns_bounded = pull_mdns
-    registry.local.restart_browser = restart_browser
-
-    asyncio.run(registry._refresh_ui_active_telemetry(device, 100))
-
-    assert pulls == 2
-    assert restarts == 1
-    assert device["localtelemetry_at"] == 100
-    assert device["localsensornodata"] == 0
 
 
 def test_local_ack_only_command_does_not_fake_switch_state():

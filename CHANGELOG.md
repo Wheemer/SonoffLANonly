@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.4
+
+- Stop sending unsupported local `uiActive` lease requests to standalone UIID 32 and 182 power devices.
+- Restore interval-controlled `sledonline` telemetry recovery while preserving the current LED setting.
+- Keep the separate SPM parent/child `uiActive` protocol unchanged.
+
 ## 4.0.3
 
 - Refresh entity availability after every successful LAN probe so channel entities recover even when LAN capability remained enabled through a transport outage.

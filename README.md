@@ -83,7 +83,7 @@ Allowed values are `1` through `300` seconds. Restart Home Assistant after chang
 
 A value saved through the device's **Update interval** control overrides YAML for that device. This keeps existing YAML defaults intact while allowing normal adjustments from the Home Assistant UI.
 
-LAN callbacks reset the device timer. The integration sends a direct local refresh only after the device has been silent for the configured interval, so normal callbacks remain authoritative instead of being duplicated by blind polling. Power-monitoring devices use their firmware-specific recovery path. Devices that support `uiActive` keep a separate 60-second live-reporting lease, renewed every 50 seconds, while `update_interval` controls when a stale publication is actively requested over mDNS. A shorter interval cannot make firmware generate new measurements more quickly than it permits, and one-second intervals increase local network traffic.
+LAN callbacks reset the device timer. The integration sends a direct local refresh only after the device has been silent for the configured interval, so normal callbacks remain authoritative instead of being duplicated by blind polling. Power-monitoring devices use their firmware-specific recovery path. S40 and compatible standalone power plugs are refreshed with `sledonline` while preserving the device's current LED setting. A shorter interval cannot make firmware generate new measurements more quickly than it permits, and one-second intervals increase local network traffic.
 
 Each device also provides a disabled-by-default diagnostic **Connection** binary sensor. It reports **Connected** only while the device has a usable LAN path and **Disconnected** after the local transport is lost or repeated direct connection attempts fail. LAN receive, telemetry, polling, and switch-confirmation diagnostics remain available as attributes.
 
@@ -111,7 +111,7 @@ sonoff:
 
 ## Telemetry And Recovery
 
-Supported power devices use local callbacks for power, current, voltage, and energy data. When telemetry becomes older than the configured interval, SonoffLANonly uses the proven device-specific recovery path: a bounded active mDNS refresh for `uiActive` devices, or the appropriate LAN telemetry command for other supported firmware. An HTTP acknowledgement alone is not treated as fresh sensor data.
+Supported power devices use local callbacks for power, current, voltage, and energy data. When telemetry becomes older than the configured interval, SonoffLANonly sends the appropriate LAN telemetry command and waits for the resulting local publication. Standalone S40/UIID 182 and UIID 32 devices use `sledonline`; local `uiActive` is not used because affected firmware rejects it. An HTTP acknowledgement alone is not treated as fresh sensor data.
 
 Historical energy requests are also considered successful only after the requested energy payload arrives, either in the LAN response or through the subsequent local callback. An empty acknowledgement does not advance the entity's hourly history throttle.
 

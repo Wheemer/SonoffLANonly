@@ -18,9 +18,6 @@ LOCAL_RETRY_SECONDS = 15
 LOCAL_SENSOR_DEFAULT_SECONDS = 30
 LOCAL_POLL_LOOP_SECONDS = 1
 LOCAL_SENSOR_COMMANDS = frozenset({"sledonline", "statistics", "uiActive"})
-LOCAL_UI_ACTIVE_UIIDS = frozenset({32, 182})
-LOCAL_UI_ACTIVE_SECONDS = 60
-LOCAL_UI_ACTIVE_REFRESH_SECONDS = 50
 LOCAL_TELEMETRY_WAIT_SECONDS = 15
 LOCAL_TELEMETRY_MDNS_POLL_SECONDS = 2
 LOCAL_SWITCH_WAIT_SECONDS = 5
@@ -35,7 +32,6 @@ LOCAL_RUNTIME_DEVICE_KEYS = frozenset(
         "localfail",
         "localrecv",
         "localping",
-        "localuiactiveping",
         "localsensorping",
         "localsensorfail",
         "localsensorfail_at",
@@ -147,7 +143,6 @@ class XRegistry(XRegistryBase):
                     device.setdefault("local", False)
                 device.setdefault("localfail", 0)
                 device.setdefault("localping", 0)
-                device.setdefault("localuiactiveping", 0)
                 device.setdefault("localrecv", 0)
                 device.setdefault("localsensorping", 0)
 
@@ -614,34 +609,6 @@ class XRegistry(XRegistryBase):
                     device["localsensorping"] = time.time() + min(interval, 5)
                     self.dispatcher_send(device["deviceid"], None)
 
-    async def _refresh_ui_active_telemetry(
-        self, device: XDevice, refresh_ts: float
-    ):
-        """Pull the current live-reporting publication once."""
-        device["localsensorpending"] = refresh_ts
-        try:
-            await self._pull_mdns_bounded(device)
-            if (device.get("localtelemetry_at") or 0) >= refresh_ts:
-                return
-
-            ts = time.time()
-            misses = device.get("localsensornodata", 0) + 1
-            if misses >= 3:
-                await self.local.restart_browser()
-                await asyncio.sleep(0)
-                await self._pull_mdns_bounded(device)
-                if (device.get("localtelemetry_at") or 0) >= refresh_ts:
-                    return
-
-            device["localsensornodata"] = misses
-            device["localsensornodata_at"] = ts
-            device["localsensorfail_at"] = ts
-        finally:
-            if device.get("localsensorpending") == refresh_ts:
-                device.pop("localsensorpending", None)
-            if device["deviceid"] in self.devices:
-                self.dispatcher_send(device["deviceid"], None)
-
     async def _verify_sensor_telemetry(
         self,
         device: XDevice,
@@ -916,21 +883,6 @@ class XRegistry(XRegistryBase):
     async def update_local(self, device: XDevice, ts: float):
         uiid = device["extra"]["uiid"]
 
-        # The current eWeLink app opens a 60-second live-reporting lease for
-        # devices that advertise UI_ACTIVE, refreshing it every 50 seconds.
-        if (
-            uiid in LOCAL_UI_ACTIVE_UIIDS
-            and not device.get("localsensorpending")
-            and ts >= device.get("localuiactiveping", 0)
-        ):
-            device["localuiactiveping"] = ts + LOCAL_UI_ACTIVE_REFRESH_SECONDS
-            await self.send_local(
-                device,
-                "uiActive",
-                {"uiActive": LOCAL_UI_ACTIVE_SECONDS, "NO_SAVE_DB": True},
-            )
-            return
-
         # 1. Poll realtime sensors when telemetry is stale (not on every LAN message).
         last_telemetry = device.get("localtelemetry_at") or 0
         interval = self._sensor_update_interval(device)
@@ -942,13 +894,8 @@ class XRegistry(XRegistryBase):
             and not device.get("localsensorpending")
             and ts >= device.get("localsensorping", 0)
         ):
-            if uiid in LOCAL_UI_ACTIVE_UIIDS:
-                device["localsensorping"] = ts + interval
-                await self._refresh_ui_active_telemetry(device, ts)
-                return
-
             # TH10R2 (15) and THR316D/THR320D (181) shouldn't be here, but anyway
-            if uiid in (15, 181, 190, 262, 277):
+            if uiid in (15, 32, 181, 182, 190, 262, 277):
                 if "sledOnline" in device["params"]:
                     params = {"sledOnline": device["params"]["sledOnline"]}
                     gap = (
@@ -969,13 +916,9 @@ class XRegistry(XRegistryBase):
                 await self.send_local(device, "statistics")
                 return
 
-        # 2. Availability ping (S40-class plugs use sledonline instead of getState).
+        # 2. Availability ping (some devices use sledonline instead of getState).
         if ts >= device.get("localping", 0):
-            if uiid in LOCAL_UI_ACTIVE_UIIDS:
-                device["localping"] = device.get(
-                    "localuiactiveping", ts + LOCAL_UI_ACTIVE_REFRESH_SECONDS
-                )
-            elif uiid in LOCAL_NO_GETSTATE_UIIDS:
+            if uiid in LOCAL_NO_GETSTATE_UIIDS:
                 if "sledOnline" in device["params"]:
                     await self.send_local(
                         device,
