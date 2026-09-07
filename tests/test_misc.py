@@ -666,6 +666,33 @@ def test_verify_sensor_telemetry_restarts_browser_on_third_miss():
     assert device["localsensornodata"] == 3
 
 
+def test_verify_sensor_telemetry_does_not_keep_restarting_browser():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    device = XDevice(deviceid=DEVICEID, local=True, localsensornodata=3)
+    registry.devices = {DEVICEID: device}
+    restarted = []
+
+    async def pull_mdns(dev, **kwargs):
+        return False
+
+    async def restart_browser():
+        restarted.append(True)
+        return True
+
+    registry._pull_mdns_bounded = pull_mdns
+    registry.local.restart_browser = restart_browser
+    loop.run_until_complete(
+        registry._verify_sensor_telemetry(device, time.time(), wait_seconds=0)
+    )
+    loop.close()
+
+    assert restarted == []
+    assert device["localsensornodata"] == 4
+
+
 def test_verify_sensor_telemetry_pulls_mdns_until_payload_arrives(monkeypatch):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -1204,7 +1231,7 @@ def test_plural_inching_confirms_only_changed_field():
     assert DEVICEID not in registry._inching_pending
 
 
-def test_confirm_switch_ack_requires_matching_getstate():
+def test_switch_ack_returns_without_blocking_getstate():
     loop = asyncio.new_event_loop()
     # noinspection PyTypeChecker
     registry: XRegistry = XRegistry(None)
@@ -1222,7 +1249,7 @@ def test_confirm_switch_ack_requires_matching_getstate():
     async def local_send(dev, params=None, command=None, sequence=None, timeout=5):
         if command is None and params:
             command = next(iter(params))
-        calls.append((command, params))
+        calls.append((command, params, timeout))
         if command == "switches":
             return "ack"
         if command == "getState":
@@ -1243,12 +1270,13 @@ def test_confirm_switch_ack_requires_matching_getstate():
     loop.close()
 
     assert ok == "ack"
-    assert calls[0][0] == "switches"
-    assert calls[1] == ("getState", None)
+    assert calls == [
+        ("switches", {"switches": [{"outlet": 0, "switch": "on"}]}, 1)
+    ]
     assert device["params"]["switches"][0]["switch"] == "off"
 
 
-def test_confirm_switch_ack_succeeds_when_getstate_reports_target_state():
+def test_explicit_switch_confirmation_uses_getstate():
     loop = asyncio.new_event_loop()
     # noinspection PyTypeChecker
     registry: XRegistry = XRegistry(None)
@@ -1280,7 +1308,11 @@ def test_confirm_switch_ack_succeeds_when_getstate_reports_target_state():
     registry.local.send = local_send
 
     ok = loop.run_until_complete(
-        registry.send(device, {"switches": [{"outlet": 0, "switch": "on"}]})
+        registry.send(
+            device,
+            {"switches": [{"outlet": 0, "switch": "on"}]},
+            confirm_lan={"switches": [{"outlet": 0, "switch": "on"}]},
+        )
     )
     loop.close()
 
@@ -1288,7 +1320,7 @@ def test_confirm_switch_ack_succeeds_when_getstate_reports_target_state():
     assert device["params"]["switches"][0]["switch"] == "on"
 
 
-def test_s40_switch_confirmation_uses_mdns_not_getstate(monkeypatch):
+def test_s40_switch_ack_returns_without_mdns_confirmation(monkeypatch):
     monkeypatch.setattr(
         "custom_components.sonoff.core.ewelink.LOCAL_SWITCH_WAIT_SECONDS", 0
     )
@@ -1318,11 +1350,11 @@ def test_s40_switch_confirmation_uses_mdns_not_getstate(monkeypatch):
             return "ack"
         return "error"
 
+    mdns_pulls = []
+
     async def pull_mdns(dev, **kwargs):
-        registry.local_update(
-            {"deviceid": DEVICEID, "params": {"power": "10.0", "current": "0.1"}}
-        )
-        return True
+        mdns_pulls.append(dev)
+        return False
 
     registry.local.send = local_send
     registry.local.pull_mdns = pull_mdns
@@ -1334,7 +1366,8 @@ def test_s40_switch_confirmation_uses_mdns_not_getstate(monkeypatch):
     assert ("getState", None) not in calls
     assert any(call[0] == "switch" for call in calls)
     assert device["params"]["switch"] == "off"
-    assert device.get("localswitchnodata", 0) == 1
+    assert mdns_pulls == []
+    assert device.get("localswitchnodata", 0) == 0
 
 
 def test_s40_switch_confirmation_succeeds_when_mdns_reports_target_state(monkeypatch):
@@ -1376,7 +1409,9 @@ def test_s40_switch_confirmation_succeeds_when_mdns_reports_target_state(monkeyp
     registry.local.send = local_send
     registry.local.pull_mdns = pull_mdns
 
-    ok = loop.run_until_complete(registry.send(device, {"switch": "on"}))
+    ok = loop.run_until_complete(
+        registry.send(device, {"switch": "on"}, confirm_lan={"switch": "on"})
+    )
     loop.close()
 
     assert ok == "online"

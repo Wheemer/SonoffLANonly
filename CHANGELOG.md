@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.5
+
+- Restore immediate LAN relay control by returning as soon as the device accepts an ordinary switch command instead of blocking on a second state request.
+- Restore the one-second default command timeout while retaining explicit confirmation for configuration writes that require it.
+- Limit stalled-telemetry resolver recovery to the third consecutive miss instead of restarting it after every later miss.
+
 ## 4.0.4
 
 - Stop sending unsupported local `uiActive` lease requests to standalone UIID 32 and 182 power devices.

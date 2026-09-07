@@ -13,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SIGNAL_ADD_ENTITIES = "add_entities"
 LOCAL_TTL = 60
-LOCAL_COMMAND_TIMEOUT = 3
+LOCAL_COMMAND_TIMEOUT = 1
 LOCAL_RETRY_SECONDS = 15
 LOCAL_SENSOR_DEFAULT_SECONDS = 30
 LOCAL_POLL_LOOP_SECONDS = 1
@@ -284,7 +284,7 @@ class XRegistry(XRegistryBase):
         can_cloud = False if LAN_ONLY else self.can_cloud(device)
         query_cloud = False if LAN_ONLY else query_cloud
         local_params = params_lan if params_lan is not None else params
-        expected = confirm_lan if confirm_lan is not None else local_params
+        expected = confirm_lan
 
         if can_local and can_cloud:
             # Personal fork policy: give known local devices room to answer.
@@ -295,7 +295,7 @@ class XRegistry(XRegistryBase):
             if ok == "online":
                 return ok
 
-            if ok == "ack":
+            if ok == "ack" and expected is not None:
                 ok = await self._confirm_local_state(
                     main_device, expected, timeout_lan
                 )
@@ -319,7 +319,7 @@ class XRegistry(XRegistryBase):
             ok = await self.local.send(
                 main_device, local_params, cmd_lan, seq, timeout_lan
             )
-            if ok == "ack":
+            if ok == "ack" and expected is not None:
                 ok = await self._confirm_local_state(main_device, expected, timeout_lan)
             if ok != "online":
                 main_device["localping"] = 0  # instant local ping request
@@ -632,7 +632,7 @@ class XRegistry(XRegistryBase):
 
         ts = time.time()
         misses = device.get("localsensornodata", 0) + 1
-        if misses >= 3:
+        if misses == 3:
             await self.local.restart_browser()
             await asyncio.sleep(0)
             await self._pull_mdns_bounded(device)
