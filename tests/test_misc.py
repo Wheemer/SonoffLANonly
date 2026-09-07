@@ -638,7 +638,7 @@ def test_verify_sensor_telemetry_marks_nodata_when_payload_missing():
     assert device.get("localsensorfail", 0) == 0
 
 
-def test_verify_sensor_telemetry_restarts_browser_on_third_miss():
+def test_verify_sensor_telemetry_records_consecutive_misses():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     # noinspection PyTypeChecker
@@ -647,51 +647,16 @@ def test_verify_sensor_telemetry_restarts_browser_on_third_miss():
         deviceid=DEVICEID, local=True, localsensornodata=2
     )
     registry.devices = {DEVICEID: device}
-    restarted = []
-
     async def pull_mdns(dev, **kwargs):
         return False
 
-    async def restart_browser():
-        restarted.append(True)
-        return True
-
     registry._pull_mdns_bounded = pull_mdns
-    registry.local.restart_browser = restart_browser
     loop.run_until_complete(
         registry._verify_sensor_telemetry(device, time.time(), wait_seconds=0)
     )
     loop.close()
 
-    assert restarted == [True]
     assert device["localsensornodata"] == 3
-
-
-def test_verify_sensor_telemetry_does_not_keep_restarting_browser():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    # noinspection PyTypeChecker
-    registry: XRegistry = XRegistry(None)
-    device = XDevice(deviceid=DEVICEID, local=True, localsensornodata=3)
-    registry.devices = {DEVICEID: device}
-    restarted = []
-
-    async def pull_mdns(dev, **kwargs):
-        return False
-
-    async def restart_browser():
-        restarted.append(True)
-        return True
-
-    registry._pull_mdns_bounded = pull_mdns
-    registry.local.restart_browser = restart_browser
-    loop.run_until_complete(
-        registry._verify_sensor_telemetry(device, time.time(), wait_seconds=0)
-    )
-    loop.close()
-
-    assert restarted == []
-    assert device["localsensornodata"] == 4
 
 
 def test_verify_sensor_telemetry_pulls_mdns_until_payload_arrives(monkeypatch):
@@ -1502,42 +1467,21 @@ def test_local_send_reraises_cancelled_error():
     loop.close()
 
 
-def test_local_restart_browser_replaces_only_active_resolver(monkeypatch):
-    class Browser:
-        def __init__(self):
-            self.cancelled = False
-
-        async def async_cancel(self):
-            self.cancelled = True
-
-    class RecoveryZeroconf:
-        def __init__(self):
-            self.zeroconf = object()
-            self.closed = False
-
-        async def async_close(self):
-            self.closed = True
-
-    old_browser = Browser()
-    monkeypatch.setattr(
-        "custom_components.sonoff.core.ewelink.local.AsyncZeroconf",
-        RecoveryZeroconf,
-    )
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+def test_active_mdns_pull_uses_home_assistant_shared_zeroconf():
     registry = XRegistryLocal(None)
-    registry.online = True
-    registry.zeroconf = object()
-    registry.browser = old_browser
+    shared = object()
+    registry.zeroconf = shared
+    calls = []
 
-    restarted = loop.run_until_complete(registry.restart_browser())
-    loop.close()
+    async def pull(zeroconf, device, timeout_ms):
+        calls.append((zeroconf, device, timeout_ms))
+        return True
 
-    assert restarted
-    assert not old_browser.cancelled
-    assert registry.browser is old_browser
-    assert registry._recovery_zeroconf.zeroconf is not registry.zeroconf
+    registry._pull_mdns_from = pull
+    device = XDevice(deviceid=DEVICEID)
+
+    assert asyncio.run(registry.pull_mdns(device, timeout_ms=750))
+    assert calls == [(shared, device, 750)]
 
 
 def test_active_mdns_pull_evicts_cached_record_and_forces_query(monkeypatch):

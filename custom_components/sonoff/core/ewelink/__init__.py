@@ -655,15 +655,6 @@ class XRegistry(XRegistryBase):
 
         ts = time.time()
         misses = device.get("localsensornodata", 0) + 1
-        if misses == 3:
-            await self.local.restart_browser()
-            await asyncio.sleep(0)
-            await self._pull_mdns_bounded(device)
-            if (device.get("localtelemetry_at") or 0) >= poll_ts:
-                device.pop("localsensorpending", None)
-                self.dispatcher_send(device["deviceid"], None)
-                return
-
         device["localsensornodata_at"] = ts
         device["localsensornodata"] = misses
         device["localsensorfail_at"] = ts

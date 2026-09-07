@@ -111,7 +111,7 @@ sonoff:
 
 ## Telemetry And Recovery
 
-Supported power devices use local callbacks for power, current, voltage, and energy data. When telemetry becomes older than the configured interval, SonoffLANonly sends the appropriate LAN telemetry command and waits for the resulting local publication. Active reads use a dedicated resolver and discard its cached service record first, so only a fresh device reply advances telemetry freshness. Standalone S40/UIID 182 and UIID 32 devices use `sledonline`; local `uiActive` is not used because affected firmware rejects it. An HTTP acknowledgement alone is not treated as fresh sensor data.
+Supported power devices use local callbacks for power, current, voltage, and energy data. When telemetry becomes older than the configured interval, SonoffLANonly sends the appropriate LAN telemetry command and waits for the resulting local publication. Active reads use Home Assistant's shared Zeroconf instance and discard only the target service's cached record first, so only a fresh device reply advances telemetry freshness. Standalone S40/UIID 182 and UIID 32 devices use `sledonline`; local `uiActive` is not used because affected firmware rejects it. An HTTP acknowledgement alone is not treated as fresh sensor data.
 
 Historical energy requests are also considered successful only after the requested energy payload arrives, either in the LAN response or through the subsequent local callback. An empty acknowledgement does not advance the entity's hourly history throttle.
 

@@ -20,7 +20,7 @@ from aiohttp.hdrs import CONTENT_TYPE
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from zeroconf import DNSQuestionType, ServiceStateChange, Zeroconf
-from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
+from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
 
 from .base import SIGNAL_CONNECTED, SIGNAL_UPDATE, XDevice, XRegistryBase
 
@@ -86,9 +86,6 @@ class XRegistryLocal(XRegistryBase):
 
     def __init__(self, session: aiohttp.ClientSession):
         super().__init__(session)
-        self._browser_restart_lock = asyncio.Lock()
-        self._browser_restart_at: float | None = None
-        self._recovery_zeroconf: AsyncZeroconf | None = None
         self._handler_tasks: set[asyncio.Task] = set()
 
     def start(self, zeroconf: Zeroconf):
@@ -104,7 +101,6 @@ class XRegistryLocal(XRegistryBase):
         if self.browser:
             await self.browser.async_cancel()
             self.browser = None
-        await self._stop_recovery_resolver()
         for task in list(self._handler_tasks):
             task.cancel()
         for task in list(self._handler_tasks):
@@ -112,33 +108,6 @@ class XRegistryLocal(XRegistryBase):
                 await task
         self._handler_tasks.clear()
         self.zeroconf = None
-
-    async def restart_browser(self, cooldown: float = 10.0) -> bool:
-        """Replace the dedicated active resolver without touching HA's browser."""
-        async with self._browser_restart_lock:
-            if not self.online or not self.zeroconf:
-                return False
-
-            now = asyncio.get_running_loop().time()
-            if (
-                self.browser
-                and self._browser_restart_at is not None
-                and now - self._browser_restart_at < cooldown
-            ):
-                return False
-
-            await self._stop_recovery_resolver()
-            self._recovery_zeroconf = AsyncZeroconf()
-            self._browser_restart_at = now
-            _LOGGER.warning(
-                "Replaced stalled eWeLink active mDNS resolver"
-            )
-            return True
-
-    async def _stop_recovery_resolver(self) -> None:
-        if self._recovery_zeroconf:
-            await self._recovery_zeroconf.async_close()
-            self._recovery_zeroconf = None
 
     def _handler1(
         self,
@@ -194,13 +163,9 @@ class XRegistryLocal(XRegistryBase):
 
     async def pull_mdns(self, device: XDevice, timeout_ms: int = 1500) -> bool:
         """Actively query mDNS after sledonline ack-only HTTP responses."""
-        if not self._recovery_zeroconf:
-            async with self._browser_restart_lock:
-                if not self._recovery_zeroconf:
-                    self._recovery_zeroconf = AsyncZeroconf()
-        return await self._pull_mdns_from(
-            self._recovery_zeroconf.zeroconf, device, timeout_ms
-        )
+        if not self.zeroconf:
+            return False
+        return await self._pull_mdns_from(self.zeroconf, device, timeout_ms)
 
     async def _pull_mdns_from(
         self, zeroconf: Zeroconf, device: XDevice, timeout_ms: int
