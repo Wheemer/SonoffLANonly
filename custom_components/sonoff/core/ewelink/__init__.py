@@ -30,6 +30,7 @@ LOCAL_CONNECT_FAIL_CODES = frozenset(
 LOCAL_RUNTIME_DEVICE_KEYS = frozenset(
     {
         "localfail",
+        "localgetstate",
         "localrecv",
         "localping",
         "localsensorping",
@@ -301,6 +302,14 @@ class XRegistry(XRegistryBase):
                 )
                 if ok == "online":
                     return ok
+            elif ok == "ack" and local_params and (
+                "switch" in local_params or "switches" in local_params
+            ):
+                self._track_telemetry_task(
+                    self._confirm_switch_via_mdns(
+                        main_device, local_params, timeout_lan
+                    )
+                )
 
             main_device["localping"] = 0  # instant local ping request
             if PREFER_KNOWN_LOCAL and main_device.get("local"):
@@ -321,6 +330,14 @@ class XRegistry(XRegistryBase):
             )
             if ok == "ack" and expected is not None:
                 ok = await self._confirm_local_state(main_device, expected, timeout_lan)
+            elif ok == "ack" and local_params and (
+                "switch" in local_params or "switches" in local_params
+            ):
+                self._track_telemetry_task(
+                    self._confirm_switch_via_mdns(
+                        main_device, local_params, timeout_lan
+                    )
+                )
             if ok != "online":
                 main_device["localping"] = 0  # instant local ping request
 
@@ -440,7 +457,13 @@ class XRegistry(XRegistryBase):
         while True:
             if device["deviceid"] not in self.devices:
                 return "ack"
-            await self._pull_mdns_bounded(device)
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            await self._pull_mdns_bounded(
+                device,
+                timeout_ms=max(1, min(LOCAL_MDNS_PULL_TIMEOUT_MS, int(remaining * 1000))),
+            )
             if self._switch_confirmed_since(device, expected, confirm_ts):
                 device.pop("localswitchpending", None)
                 device["localswitchnodata"] = 0
@@ -448,7 +471,7 @@ class XRegistry(XRegistryBase):
                 return "online"
             if time.time() >= deadline:
                 break
-            await asyncio.sleep(LOCAL_TELEMETRY_MDNS_POLL_SECONDS)
+            await asyncio.sleep(min(0.1, max(deadline - time.time(), 0)))
 
         ts = time.time()
         device["localswitchnodata_at"] = ts
@@ -583,11 +606,11 @@ class XRegistry(XRegistryBase):
         except (TypeError, ValueError):
             return float(LOCAL_SENSOR_DEFAULT_SECONDS)
 
-    async def _pull_mdns_bounded(self, device: XDevice) -> bool:
+    async def _pull_mdns_bounded(
+        self, device: XDevice, timeout_ms: int = LOCAL_MDNS_PULL_TIMEOUT_MS
+    ) -> bool:
         async with self._mdns_semaphore:
-            return await self.local.pull_mdns(
-                device, timeout_ms=LOCAL_MDNS_PULL_TIMEOUT_MS
-            )
+            return await self.local.pull_mdns(device, timeout_ms=timeout_ms)
 
     async def _await_sensor_telemetry(self, device: XDevice, poll_ts: float):
         try:
@@ -918,7 +941,10 @@ class XRegistry(XRegistryBase):
 
         # 2. Availability ping (some devices use sledonline instead of getState).
         if ts >= device.get("localping", 0):
-            if uiid in LOCAL_NO_GETSTATE_UIIDS:
+            if device.get("localgetstate") is False:
+                if not await self._pull_mdns_bounded(device):
+                    device["localping"] = ts + interval
+            elif uiid in LOCAL_NO_GETSTATE_UIIDS:
                 if "sledOnline" in device["params"]:
                     await self.send_local(
                         device,
@@ -978,7 +1004,7 @@ class XRegistry(XRegistryBase):
     ):
         poll_ts = time.time() if command in LOCAL_SENSOR_COMMANDS else None
         ok = await self.local.send(device, params, command)
-        if ok in ("online", "ack"):
+        if ok in ("online", "online_no_data", "ack"):
             was_local = device["local"]
             device["local"] = True
             device["localfail"] = 0
@@ -993,6 +1019,9 @@ class XRegistry(XRegistryBase):
             # A device may remain LAN-capable while its entities are unavailable
             # after transport failures. Refresh them after every successful probe.
             self.dispatcher_send(did)
+            if command is None and ok == "online_no_data":
+                device["localgetstate"] = False
+                await self._pull_mdns_bounded(device)
             if poll_ts is not None:
                 device["localsensorack_at"] = time.time()
                 if (device.get("localtelemetry_at") or 0) >= poll_ts:

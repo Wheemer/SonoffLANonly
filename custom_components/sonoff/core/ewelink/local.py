@@ -19,7 +19,7 @@ import aiohttp
 from aiohttp.hdrs import CONTENT_TYPE
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from zeroconf import ServiceStateChange, Zeroconf
+from zeroconf import DNSQuestionType, ServiceStateChange, Zeroconf
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 
 from .base import SIGNAL_CONNECTED, SIGNAL_UPDATE, XDevice, XRegistryBase
@@ -114,7 +114,7 @@ class XRegistryLocal(XRegistryBase):
         self.zeroconf = None
 
     async def restart_browser(self, cooldown: float = 10.0) -> bool:
-        """Restart a stalled mDNS browser without restarting the integration."""
+        """Replace the dedicated active resolver without touching HA's browser."""
         async with self._browser_restart_lock:
             if not self.online or not self.zeroconf:
                 return False
@@ -127,21 +127,11 @@ class XRegistryLocal(XRegistryBase):
             ):
                 return False
 
-            if self.browser:
-                await self.browser.async_cancel()
-            self.browser = AsyncServiceBrowser(
-                self.zeroconf, SERVICE_TYPE, [self._handler1]
-            )
-
-            # A fresh resolver recovers active reads when Home Assistant's
-            # long-lived shared Zeroconf sockets survive an interface loss in a
-            # stale state. Do not attach another browser: the shared browser
-            # remains the passive callback path.
             await self._stop_recovery_resolver()
             self._recovery_zeroconf = AsyncZeroconf()
             self._browser_restart_at = now
             _LOGGER.warning(
-                "Restarted stalled eWeLink mDNS browser with fresh resolver"
+                "Replaced stalled eWeLink active mDNS resolver"
             )
             return True
 
@@ -204,24 +194,13 @@ class XRegistryLocal(XRegistryBase):
 
     async def pull_mdns(self, device: XDevice, timeout_ms: int = 1500) -> bool:
         """Actively query mDNS after sledonline ack-only HTTP responses."""
-        if self._recovery_zeroconf and await self._pull_mdns_from(
+        if not self._recovery_zeroconf:
+            async with self._browser_restart_lock:
+                if not self._recovery_zeroconf:
+                    self._recovery_zeroconf = AsyncZeroconf()
+        return await self._pull_mdns_from(
             self._recovery_zeroconf.zeroconf, device, timeout_ms
-        ):
-            return True
-
-        if self.zeroconf and await self._pull_mdns_from(
-            self.zeroconf, device, timeout_ms
-        ):
-            return True
-
-        if self.zeroconf:
-            return False
-
-        temporary = AsyncZeroconf()
-        try:
-            return await self._pull_mdns_from(temporary.zeroconf, device, timeout_ms)
-        finally:
-            await temporary.async_close()
+        )
 
     async def _pull_mdns_from(
         self, zeroconf: Zeroconf, device: XDevice, timeout_ms: int
@@ -229,9 +208,16 @@ class XRegistryLocal(XRegistryBase):
         deviceid = device["deviceid"]
         for name in mdns_service_candidates(deviceid, device.get("mdns_service")):
             try:
+                cached = list(zeroconf.cache.async_entries_with_name(name))
+                if cached:
+                    zeroconf.cache.async_remove_records(cached)
                 info = AsyncServiceInfo(SERVICE_TYPE, name)
                 if (
-                    not await info.async_request(zeroconf, timeout_ms)
+                    not await info.async_request(
+                        zeroconf,
+                        timeout_ms,
+                        question_type=DNSQuestionType.QU,
+                    )
                     or not info.properties
                 ):
                     continue
@@ -338,7 +324,7 @@ class XRegistryLocal(XRegistryBase):
                 if r.headers.get(CONTENT_TYPE) == "text/html":
                     _LOGGER.debug(f"{log} <= text/html")
                     if command == "getState":
-                        return "online"
+                        return "online_no_data"
                     return "error"
 
                 resp: dict = await r.json()
@@ -375,7 +361,7 @@ class XRegistryLocal(XRegistryBase):
                     return "online"
 
                 elif command == "getState":
-                    return "online"
+                    return "online_no_data"
 
                 else:
                     return "error"

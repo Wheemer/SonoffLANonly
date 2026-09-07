@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import aiohttp
 import pytest
+from zeroconf import DNSQuestionType
 
 from custom_components.sonoff.core.devices import spec
 from custom_components.sonoff.core.ewelink import (
@@ -1245,6 +1246,11 @@ def test_switch_ack_returns_without_blocking_getstate():
     )
     registry.devices = {DEVICEID: device}
     calls = []
+    scheduled = []
+
+    def track_confirmation(coro):
+        scheduled.append(coro)
+        coro.close()
 
     async def local_send(dev, params=None, command=None, sequence=None, timeout=5):
         if command is None and params:
@@ -1263,6 +1269,7 @@ def test_switch_ack_returns_without_blocking_getstate():
         return "error"
 
     registry.local.send = local_send
+    registry._track_telemetry_task = track_confirmation
 
     ok = loop.run_until_complete(
         registry.send(device, {"switches": [{"outlet": 0, "switch": "on"}]})
@@ -1273,6 +1280,7 @@ def test_switch_ack_returns_without_blocking_getstate():
     assert calls == [
         ("switches", {"switches": [{"outlet": 0, "switch": "on"}]}, 1)
     ]
+    assert len(scheduled) == 1
     assert device["params"]["switches"][0]["switch"] == "off"
 
 
@@ -1320,7 +1328,7 @@ def test_explicit_switch_confirmation_uses_getstate():
     assert device["params"]["switches"][0]["switch"] == "on"
 
 
-def test_s40_switch_ack_returns_without_mdns_confirmation(monkeypatch):
+def test_s40_switch_ack_schedules_background_mdns_confirmation(monkeypatch):
     monkeypatch.setattr(
         "custom_components.sonoff.core.ewelink.LOCAL_SWITCH_WAIT_SECONDS", 0
     )
@@ -1341,6 +1349,11 @@ def test_s40_switch_ack_returns_without_mdns_confirmation(monkeypatch):
     )
     registry.devices = {DEVICEID: device}
     calls = []
+    scheduled = []
+
+    def track_confirmation(coro):
+        scheduled.append(coro)
+        coro.close()
 
     async def local_send(dev, params=None, command=None, sequence=None, timeout=5):
         if command is None and params:
@@ -1350,14 +1363,8 @@ def test_s40_switch_ack_returns_without_mdns_confirmation(monkeypatch):
             return "ack"
         return "error"
 
-    mdns_pulls = []
-
-    async def pull_mdns(dev, **kwargs):
-        mdns_pulls.append(dev)
-        return False
-
     registry.local.send = local_send
-    registry.local.pull_mdns = pull_mdns
+    registry._track_telemetry_task = track_confirmation
 
     ok = loop.run_until_complete(registry.send(device, {"switch": "on"}))
     loop.close()
@@ -1366,7 +1373,7 @@ def test_s40_switch_ack_returns_without_mdns_confirmation(monkeypatch):
     assert ("getState", None) not in calls
     assert any(call[0] == "switch" for call in calls)
     assert device["params"]["switch"] == "off"
-    assert mdns_pulls == []
+    assert len(scheduled) == 1
     assert device.get("localswitchnodata", 0) == 0
 
 
@@ -1495,7 +1502,7 @@ def test_local_send_reraises_cancelled_error():
     loop.close()
 
 
-def test_local_restart_browser_replaces_stalled_browser(monkeypatch):
+def test_local_restart_browser_replaces_only_active_resolver(monkeypatch):
     class Browser:
         def __init__(self):
             self.cancelled = False
@@ -1512,17 +1519,6 @@ def test_local_restart_browser_replaces_stalled_browser(monkeypatch):
             self.closed = True
 
     old_browser = Browser()
-    new_browsers = []
-
-    def create_browser(*args):
-        browser = Browser()
-        new_browsers.append(browser)
-        return browser
-
-    monkeypatch.setattr(
-        "custom_components.sonoff.core.ewelink.local.AsyncServiceBrowser",
-        create_browser,
-    )
     monkeypatch.setattr(
         "custom_components.sonoff.core.ewelink.local.AsyncZeroconf",
         RecoveryZeroconf,
@@ -1539,10 +1535,122 @@ def test_local_restart_browser_replaces_stalled_browser(monkeypatch):
     loop.close()
 
     assert restarted
-    assert old_browser.cancelled
-    assert registry.browser is new_browsers[0]
-    assert len(new_browsers) == 1
+    assert not old_browser.cancelled
+    assert registry.browser is old_browser
     assert registry._recovery_zeroconf.zeroconf is not registry.zeroconf
+
+
+def test_active_mdns_pull_evicts_cached_record_and_forces_query(monkeypatch):
+    removed = []
+    requests = []
+
+    class Cache:
+        @staticmethod
+        def async_entries_with_name(name):
+            return ["stale-record"]
+
+        @staticmethod
+        def async_remove_records(records):
+            removed.extend(records)
+
+    class Zeroconf:
+        cache = Cache()
+
+    class Info:
+        properties = {b"data1": b'{"switch":"on"}'}
+        addresses = []
+        server = None
+        port = 0
+
+        def __init__(self, service_type, name):
+            self.name = name
+
+        async def async_request(self, zeroconf, timeout, question_type=None):
+            requests.append((timeout, question_type))
+            return True
+
+    monkeypatch.setattr(
+        "custom_components.sonoff.core.ewelink.local.AsyncServiceInfo", Info
+    )
+    registry = XRegistryLocal(None)
+    updates = []
+    registry.dispatcher_connect(SIGNAL_UPDATE, updates.append)
+    device = XDevice(
+        deviceid=DEVICEID,
+        mdns_service=f"eWeLink_{DEVICEID}._ewelink._tcp.local.",
+    )
+
+    found = asyncio.run(registry._pull_mdns_from(Zeroconf(), device, 750))
+
+    assert found
+    assert removed == ["stale-record"]
+    assert requests == [(750, DNSQuestionType.QU)]
+    assert updates[0]["params"] == {"switch": "on"}
+
+
+def test_getstate_protocol_rejection_reports_reachable_without_state():
+    class Response:
+        headers = {}
+
+        async def json(self):
+            return {"error": 400, "seq": 1}
+
+    class Session:
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    registry = XRegistryLocal(Session())
+    device = XDevice(deviceid=DEVICEID, host="192.0.2.88:8081", params={})
+
+    result = asyncio.run(registry.send(device, command="getState"))
+
+    assert result == "online_no_data"
+
+
+def test_getstate_rejection_switches_future_polls_to_fresh_mdns():
+    # noinspection PyTypeChecker
+    registry: XRegistry = XRegistry(None)
+    registry.local.online = True
+    device = XDevice(
+        deviceid=DEVICEID,
+        extra={"uiid": 162},
+        host="192.0.2.88:8081",
+        local=True,
+        localping=0,
+        update_interval=5,
+        params={"switches": [{"outlet": 0, "switch": "off"}]},
+    )
+    registry.devices = {DEVICEID: device}
+    http_calls = []
+    mdns_calls = []
+
+    async def local_send(*args, **kwargs):
+        http_calls.append((args, kwargs))
+        return "online_no_data"
+
+    async def pull_mdns(dev, **kwargs):
+        mdns_calls.append(dev)
+        registry.local_update(
+            {
+                "deviceid": DEVICEID,
+                "params": {"switches": [{"outlet": 0, "switch": "on"}]},
+            }
+        )
+        return True
+
+    registry.local.send = local_send
+    registry._pull_mdns_bounded = pull_mdns
+
+    asyncio.run(registry.update_local(device, time.time()))
+    assert device["localgetstate"] is False
+    assert len(http_calls) == 1
+    assert len(mdns_calls) == 1
+    assert device["params"]["switches"][0]["switch"] == "on"
+
+    device["localping"] = 0
+    asyncio.run(registry.update_local(device, time.time()))
+    assert len(http_calls) == 1
+    assert len(mdns_calls) == 2
 
 
 def test_local_ack_only_command_does_not_fake_switch_state():

@@ -32,6 +32,7 @@ class XDevice(TypedDict, total=False):
     localfail: Optional[int]
     localrecv: Optional[float]
     localping: Optional[float]
+    localgetstate: Optional[bool]
     localsensorping: Optional[float]
     localsensorfail: Optional[int]
     localsensorfail_at: Optional[float]

@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.6
+
+- Confirm acknowledgement-only relay commands in the background from a fresh mDNS device reply, keeping controls responsive without inventing switch state.
+- Detect devices that reject local `getState` and automatically use fresh mDNS state polling for the rest of the runtime.
+- Keep Home Assistant's shared passive Zeroconf browser intact and isolate active recovery reads in a dedicated resolver.
+- Evict the dedicated resolver's cached service record before every active query so old telemetry cannot be timestamped as a new reading.
+
 ## 4.0.5
 
 - Restore immediate LAN relay control by returning as soon as the device accepts an ordinary switch command instead of blocking on a second state request.
